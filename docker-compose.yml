@@ -1,0 +1,18 @@
+services:
+  appuccino:
+    build: .
+    container_name: appuccino
+    restart: unless-stopped
+    ports:
+      - "8033:8000"
+    volumes:
+      - appuccino_data:/data
+    environment:
+      APP_USERNAME: ${APP_USERNAME:-admin}
+      APP_PASSWORD: ${APP_PASSWORD:-cambia-questa-password}
+      SECRET_KEY: ${SECRET_KEY:-cambia-questa-chiave-lunga-casuale}
+      DB_PATH: /data/appuccino.sqlite3
+      UPLOAD_DIR: /data/uploads
+
+volumes:
+  appuccino_data:

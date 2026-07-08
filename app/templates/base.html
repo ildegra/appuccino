@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">☕ Appuccino</a>
+  <nav>
+    <a href="/">Bar</a>
+    <a href="/settings">Categorie</a>
+    <a href="/export.csv">Export</a>
+    <a href="/logout">Esci</a>
+  </nav>
+</header>
+<main class="container">{% block content %}{% endblock %}</main>
+</body>
+</html>

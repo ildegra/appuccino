@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<section class="hero"><div><h1>I tuoi bar</h1><p>{{ bars|length }} bar · {{ visits_count }} visite · {{ '%.2f'|format(total_spent) }} € registrati</p></div></section>
+<section class="grid two"><div class="card"><h2>Aggiungi bar</h2><form method="post" action="/bars" class="stack"><input name="name" placeholder="Nome" required><input name="address" placeholder="Indirizzo"><input name="city" placeholder="Comune"><textarea name="notes" placeholder="Note"></textarea><button>Aggiungi</button></form></div>
+<div class="card"><h2>Classifica</h2>{% for bar in bars %}<a class="bar-row" href="/bars/{{ bar.id }}"><span><b>{{ bar.name }}</b><small>{{ bar.city }} {{ bar.address }}</small></span><strong>{{ bar.score if bar.score else '—' }}</strong></a>{% else %}<p>Nessun bar inserito.</p>{% endfor %}</div></section>
+{% endblock %}
