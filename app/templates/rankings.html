@@ -39,7 +39,7 @@
           <div class="ranking-row no-link">
             <span class="rank-number">{{ loop.index }}</span>
             <span class="ranking-icon">{{ p.product_icon }}</span>
-            <span class="ranking-main"><b>{{ p.product_name }}</b><small>{{ p.group_name or 'Altro' }} · {{ p.visits_count }} visite{% if p.avg_price %} · {{ '%.2f'|format(p.avg_price) }} € medi{% endif %}</small></span>
+            <span class="ranking-main"><b>{{ p.product_name }}</b><small>{{ p.group_name or 'Altro' }} · {{ p.visits_count }} visite{% if p.avg_price %} · {{ p.avg_price|decimal_it }} € medi{% endif %}</small></span>
             <span class="score-badge">{{ '%.2f'|format(p.avg_score) }}</span>
           </div>
         {% else %}<p class="muted">Non ci sono ancora abbastanza valutazioni.</p>{% endfor %}
@@ -53,7 +53,7 @@
           {% for row in group.bars[:5] %}
           <a class="ranking-row" href="/bars/{{ row.bar_id }}">
             <span class="rank-number">{{ loop.index }}</span>
-            <span class="ranking-main"><b>{{ row.bar_name }}</b><small>{{ row.visits_count }} visite{% if row.avg_price %} · {{ '%.2f'|format(row.avg_price) }} € medi{% endif %}</small></span>
+            <span class="ranking-main"><b>{{ row.bar_name }}</b><small>{{ row.visits_count }} visite{% if row.avg_price %} · {{ row.avg_price|decimal_it }} € medi{% endif %}</small></span>
             <span class="score-badge">{{ '%.2f'|format(row.avg_score) }}</span>
           </a>
           {% endfor %}

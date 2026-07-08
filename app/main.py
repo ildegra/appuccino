@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer, BadSignature
 
 APP_NAME = "Appuccino"
+APP_VERSION = "v0.5.2"
 DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
 USERNAME = os.getenv("APP_USERNAME", "admin")
 PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
@@ -23,6 +24,19 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title=APP_NAME)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
+
+def format_decimal(value, decimals=2, comma=True):
+    if value in (None, ""):
+        return ""
+    try:
+        out = f"{float(value):.{decimals}f}"
+        return out.replace(".", ",") if comma else out
+    except (TypeError, ValueError):
+        return ""
+
+
+templates.env.filters["decimal_it"] = format_decimal
+
 signer = URLSafeSerializer(SECRET_KEY, salt="appuccino-login")
 
 
@@ -220,7 +234,7 @@ def require_login(request: Request):
 
 
 def render(request: Request, template: str, context: dict):
-    context.update({"request": request, "app_name": APP_NAME, "current_user": current_user(request)})
+    context.update({"request": request, "app_name": APP_NAME, "app_version": APP_VERSION, "current_user": current_user(request)})
     return templates.TemplateResponse(template, context)
 
 
@@ -548,9 +562,37 @@ def ratings_form(request: Request, visit_id: int):
         if not visit:
             raise HTTPException(404)
         bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
-        selected_ids = [r["category_id"] for r in c.execute("SELECT DISTINCT category_id FROM visit_items WHERE visit_id=?", (visit_id,)).fetchall()]
-        existing = {f"{r['category_id']}_{r['criterion_id']}": r["score"] for r in c.execute("SELECT category_id, criterion_id, score FROM ratings WHERE visit_id=?", (visit_id,)).fetchall()}
-    cats = [cat for cat in rating_categories(True) if cat["id"] in selected_ids]
+        if not bar:
+            raise HTTPException(404)
+
+        # Costruiamo le categorie valutabili direttamente dagli elementi ordinati.
+        # È più robusto con database già migrati e con categorie create/modificate dall'utente.
+        cat_rows = [dict(r) for r in c.execute(
+            """
+            SELECT DISTINCT cat.*, parent.name AS group_name
+            FROM visit_items vi
+            JOIN categories cat ON cat.id = vi.category_id
+            LEFT JOIN categories parent ON parent.id = cat.parent_id
+            WHERE vi.visit_id = ?
+            ORDER BY COALESCE(parent.sort_order, cat.sort_order), cat.sort_order, cat.id
+            """,
+            (visit_id,),
+        ).fetchall()]
+
+        cats = []
+        for cat in cat_rows:
+            cat["criteria"] = [dict(r) for r in c.execute(
+                "SELECT * FROM criteria WHERE category_id=? AND active=1 ORDER BY sort_order, id",
+                (cat["id"],),
+            ).fetchall()]
+            # Le macrocategorie/contenitori non hanno criteri: le ignoriamo nei voti.
+            if cat["criteria"]:
+                cats.append(cat)
+
+        existing = {
+            f"{r['category_id']}_{r['criterion_id']}": r["score"]
+            for r in c.execute("SELECT category_id, criterion_id, score FROM ratings WHERE visit_id=?", (visit_id,)).fetchall()
+        }
     return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": cats, "existing": existing})
 
 
@@ -571,7 +613,7 @@ async def save_ratings_async(request: Request, visit_id: int):
             if not key.startswith("score_") or value in ("", None):
                 continue
             _, cat_id, crit_id = key.split("_")
-            c.execute("INSERT INTO ratings(visit_id,category_id,criterion_id,score) VALUES(?,?,?,?)", (visit_id, int(cat_id), int(crit_id), float(value)))
+            c.execute("INSERT INTO ratings(visit_id,category_id,criterion_id,score) VALUES(?,?,?,?)", (visit_id, int(cat_id), int(crit_id), parse_optional_float(value)))
         bar_id = c.execute("SELECT bar_id FROM visits WHERE id=?", (visit_id,)).fetchone()["bar_id"]
     return RedirectResponse(f"/bars/{bar_id}", status_code=303)
 

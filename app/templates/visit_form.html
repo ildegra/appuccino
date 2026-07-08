@@ -6,7 +6,7 @@
   <form method="post" action="{% if visit %}/visits/{{ visit.id }}/edit{% else %}/bars/{{ bar.id }}/visit{% endif %}" class="stack">
     <div class="form-grid three">
       <label>Data<input type="date" name="visited_at" value="{{ visit.visited_at if visit else today }}" required></label>
-      <label>Prezzo totale<input type="number" step="0.01" name="total_price" placeholder="3.80" value="{{ visit.total_price if visit and visit.total_price is not none else '' }}"></label>
+      <label>Prezzo totale<input type="text" inputmode="decimal" name="total_price" placeholder="3,80" value="{{ visit.total_price|decimal_it if visit and visit.total_price is not none else '' }}"></label>
       <label>Attesa<input type="number" name="wait_minutes" placeholder="minuti" value="{{ visit.wait_minutes if visit and visit.wait_minutes is not none else '' }}"></label>
     </div>
     <label>Affollamento
@@ -34,7 +34,7 @@
           {% endfor %}
         </select>
         <input type="number" min="1" name="qty_{{ i }}" value="{{ existing.quantity if existing else 1 }}" title="Quantità">
-        <input type="number" step="0.01" min="0" name="unit_price_{{ i }}" placeholder="prezzo cad." value="{{ existing.unit_price if existing and existing.unit_price is not none else '' }}">
+        <input type="text" inputmode="decimal" name="unit_price_{{ i }}" placeholder="prezzo cad." value="{{ existing.unit_price|decimal_it if existing and existing.unit_price is not none else '' }}">
         <input name="item_note_{{ i }}" placeholder="nota: es. crema, integrale, grande" value="{{ existing.note if existing else '' }}">
       </div>
     {% endfor %}

@@ -4,7 +4,7 @@
 <section class="stats-grid">
   <div class="stat-card"><span>Bar</span><b>{{ bars|length }}</b></div>
   <div class="stat-card"><span>Visite</span><b>{{ visits_count }}</b></div>
-  <div class="stat-card"><span>Spesa registrata</span><b>{{ '%.2f'|format(total_spent) }} €</b></div>
+  <div class="stat-card"><span>Spesa registrata</span><b>{{ total_spent|decimal_it }} €</b></div>
 </section>
 <section class="layout-grid">
   <div class="panel">

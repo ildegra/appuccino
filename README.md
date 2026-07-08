@@ -1,6 +1,13 @@
-# Appuccino v0.5.1
+# Appuccino v0.5.2
 
 Versione Docker/FastAPI/SQLite di Appuccino.
+
+## v0.5.2
+
+- Fix più robusto del passaggio alla pagina voti dopo il salvataggio visita.
+- Pagina voti costruita direttamente dagli elementi ordinati, evitando categorie non valutabili o dati migrati.
+- Campi prezzo in formato italiano con due decimali, ad esempio `1,50`.
+- Visualizzazione prezzi uniformata a due decimali con virgola.
 
 ## v0.5.1
 
@@ -20,4 +27,4 @@ Versione Docker/FastAPI/SQLite di Appuccino.
 ## Deploy
 
 Aggiorna il repository Git con questi file, poi in Portainer usa **Pull and redeploy**.
-Verifica che nella barra alta compaia `v0.5.1`.
+Verifica che nella barra alta compaia `v0.5.2`.

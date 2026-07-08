@@ -33,10 +33,10 @@
         <div class="visit-body">
           <div class="chips">
           {% for item in v["items"] %}
-            <span class="chip">{{ item.quantity }}× {{ item.icon }} {{ item.name }}{% if item.unit_price is not none %} · {{ '%.2f'|format(item.unit_price) }} € cad.{% endif %}{% if item.note %} · {{ item.note }}{% endif %}</span>
+            <span class="chip">{{ item.quantity }}× {{ item.icon }} {{ item.name }}{% if item.unit_price is not none %} · {{ item.unit_price|decimal_it }} € cad.{% endif %}{% if item.note %} · {{ item.note }}{% endif %}</span>
           {% endfor %}
           </div>
-          <small class="muted">{% if v.total_price %}{{ v.total_price }} €{% else %}prezzo non indicato{% endif %}{% if v.wait_minutes %} · attesa {{ v.wait_minutes }} min{% endif %}{% if v.crowd %} · {{ v.crowd }}{% endif %}</small>
+          <small class="muted">{% if v.total_price %}{{ v.total_price|decimal_it }} €{% else %}prezzo non indicato{% endif %}{% if v.wait_minutes %} · attesa {{ v.wait_minutes }} min{% endif %}{% if v.crowd %} · {{ v.crowd }}{% endif %}</small>
           {% if v.notes %}<p>{{ v.notes }}</p>{% endif %}
           <div class="actions small-actions">
             <a href="/visits/{{ v.id }}/edit">Modifica</a>
