@@ -384,7 +384,7 @@ def visit_form(request: Request, bar_id: int):
     require_login(request)
     with db() as c:
         bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
-    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "items": []})
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "ordered_items": []})
 
 
 @app.post("/bars/{bar_id}/visit")
@@ -458,7 +458,7 @@ def edit_visit_form(request: Request, visit_id: int):
         if not visit:
             raise HTTPException(404)
         bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
-    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": dict(visit), "items": visit_items(visit_id)})
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": dict(visit), "ordered_items": visit_items(visit_id)})
 
 
 @app.post("/visits/{visit_id}/edit")

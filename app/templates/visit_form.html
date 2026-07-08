@@ -19,9 +19,9 @@
 
     <div class="section-title"><span class="step-dot">2</span><h2>Elementi ordinati</h2></div>
     <div class="order-list">
-    {% set existing_count = items|length %}
+    {% set existing_count = ordered_items|length %}
     {% for i in range(1, 9) %}
-      {% set existing = items[i-1] if i <= existing_count else None %}
+      {% set existing = ordered_items[i-1] if i <= existing_count else None %}
       <div class="order-row">
         <select name="item_{{ i }}">
           <option value="">— scegli elemento —</option>

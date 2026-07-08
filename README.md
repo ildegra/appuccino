@@ -1,4 +1,4 @@
-# Appuccino v0.4.1
+# Appuccino v0.4.2
 
 Web app locale per registrare e valutare bar/colazioni.
 
