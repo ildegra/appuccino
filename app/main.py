@@ -32,6 +32,24 @@ def db():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+def parse_optional_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_optional_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 
 def hash_password(password: str, salt: str | None = None) -> str:
     salt = salt or secrets.token_hex(16)
@@ -105,6 +123,7 @@ def init_db():
                 visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
                 category_id INTEGER NOT NULL REFERENCES categories(id),
                 quantity INTEGER NOT NULL DEFAULT 1,
+                unit_price REAL,
                 note TEXT DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS ratings (
@@ -120,6 +139,10 @@ def init_db():
         cols = [r["name"] for r in c.execute("PRAGMA table_info(categories)").fetchall()]
         if "parent_id" not in cols:
             c.execute("ALTER TABLE categories ADD COLUMN parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+
+        visit_item_cols = [r["name"] for r in c.execute("PRAGMA table_info(visit_items)").fetchall()]
+        if "unit_price" not in visit_item_cols:
+            c.execute("ALTER TABLE visit_items ADD COLUMN unit_price REAL")
 
         existing_users = c.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
         if existing_users == 0:
@@ -331,7 +354,7 @@ def product_rankings(min_visits: int = 1):
                 b.name AS bar_name,
                 COUNT(DISTINCT v.id) AS visits_count,
                 AVG(r.score) AS avg_score,
-                AVG(v.total_price) AS avg_price
+                AVG(vi.unit_price) AS avg_price
             FROM visit_items vi
             JOIN visits v ON v.id = vi.visit_id
             JOIN bars b ON b.id = v.bar_id
@@ -354,7 +377,7 @@ def product_rankings(min_visits: int = 1):
                 p.name AS group_name,
                 COUNT(DISTINCT v.id) AS visits_count,
                 AVG(r.score) AS avg_score,
-                AVG(v.total_price) AS avg_price
+                AVG(vi.unit_price) AS avg_price
             FROM visit_items vi
             JOIN visits v ON v.id = vi.visit_id
             JOIN categories c ON c.id = vi.category_id
@@ -482,6 +505,8 @@ def visit_form(request: Request, bar_id: int):
     require_login(request)
     with db() as c:
         bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
     return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "ordered_items": []})
 
 
@@ -490,9 +515,11 @@ async def add_visit(request: Request, bar_id: int):
     require_login(request)
     form = await request.form()
     visited_at = form.get("visited_at") or date.today().isoformat()
-    total_price = float(form["total_price"]) if form.get("total_price") else None
-    wait_minutes = int(form["wait_minutes"]) if form.get("wait_minutes") else None
+    total_price = parse_optional_float(form.get("total_price"))
+    wait_minutes = parse_optional_int(form.get("wait_minutes"))
     with db() as c:
+        if not c.execute("SELECT id FROM bars WHERE id=?", (bar_id,)).fetchone():
+            raise HTTPException(404)
         cur = c.execute(
             "INSERT INTO visits(bar_id,visited_at,drink,food,total_price,wait_minutes,crowd,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
             (bar_id, visited_at, "", "", total_price, wait_minutes, form.get("crowd", ""), form.get("notes", ""), datetime.now().isoformat())
@@ -504,11 +531,12 @@ async def add_visit(request: Request, bar_id: int):
             idx = key.split("_", 1)[1]
             qty_raw = form.get(f"qty_{idx}") or "1"
             note = form.get(f"item_note_{idx}") or ""
+            unit_price = parse_optional_float(form.get(f"unit_price_{idx}"))
             try:
                 qty = max(1, int(qty_raw))
             except ValueError:
                 qty = 1
-            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,note) VALUES(?,?,?,?)", (visit_id, int(value), qty, note))
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, int(value), qty, unit_price, note))
     return RedirectResponse(f"/visits/{visit_id}/ratings", status_code=303)
 
 
@@ -564,8 +592,8 @@ async def edit_visit_save(request: Request, visit_id: int):
     require_login(request)
     form = await request.form()
     visited_at = form.get("visited_at") or date.today().isoformat()
-    total_price = float(form["total_price"]) if form.get("total_price") else None
-    wait_minutes = int(form["wait_minutes"]) if form.get("wait_minutes") else None
+    total_price = parse_optional_float(form.get("total_price"))
+    wait_minutes = parse_optional_int(form.get("wait_minutes"))
     with db() as c:
         visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
         if not visit:
@@ -579,12 +607,13 @@ async def edit_visit_save(request: Request, visit_id: int):
             idx = key.split("_", 1)[1]
             qty_raw = form.get(f"qty_{idx}") or "1"
             note = form.get(f"item_note_{idx}") or ""
+            unit_price = parse_optional_float(form.get(f"unit_price_{idx}"))
             try:
                 qty = max(1, int(qty_raw))
             except ValueError:
                 qty = 1
             selected.add(int(value))
-            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,note) VALUES(?,?,?,?)", (visit_id, int(value), qty, note))
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, int(value), qty, unit_price, note))
         # Se cambiano gli alimenti, eliminiamo i voti delle categorie non più selezionate.
         if selected:
             placeholders = ",".join("?" for _ in selected)
@@ -669,10 +698,10 @@ def export_csv(request: Request):
     os.close(fd)
     with db() as c, open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["bar", "data", "elementi", "prezzo", "voto_globale", "note"])
+        writer.writerow(["bar", "data", "elementi", "prezzo_totale", "voto_globale", "note"])
         rows = c.execute("SELECT v.*, b.name AS bar_name FROM visits v JOIN bars b ON b.id=v.bar_id ORDER BY visited_at DESC").fetchall()
         for r in rows:
-            items = "; ".join([f"{it['quantity']}x {it['name']}" + (f" ({it['note']})" if it['note'] else "") for it in visit_items(r["id"])])
+            items = "; ".join([f"{it['quantity']}x {it['name']}" + (f" - {it['unit_price']:.2f} € cad." if it.get('unit_price') is not None else "") + (f" ({it['note']})" if it['note'] else "") for it in visit_items(r["id"])])
             writer.writerow([r["bar_name"], r["visited_at"], items, r["total_price"], visit_score(r["id"])[0], r["notes"]])
     return FileResponse(path, media_type="text/csv", filename="appuccino-export.csv")
 

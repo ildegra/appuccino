@@ -34,6 +34,7 @@
           {% endfor %}
         </select>
         <input type="number" min="1" name="qty_{{ i }}" value="{{ existing.quantity if existing else 1 }}" title="Quantità">
+        <input type="number" step="0.01" min="0" name="unit_price_{{ i }}" placeholder="prezzo cad." value="{{ existing.unit_price if existing and existing.unit_price is not none else '' }}">
         <input name="item_note_{{ i }}" placeholder="nota: es. crema, integrale, grande" value="{{ existing.note if existing else '' }}">
       </div>
     {% endfor %}
