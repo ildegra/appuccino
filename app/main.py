@@ -100,6 +100,13 @@ def init_db():
                 photo_path TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS visit_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                quantity INTEGER NOT NULL DEFAULT 1,
+                note TEXT DEFAULT ''
+            );
             CREATE TABLE IF NOT EXISTS ratings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
@@ -216,18 +223,46 @@ def categories_with_criteria(active_only=False):
 def rating_categories(active_only=True):
     roots = categories_with_criteria(active_only)
     out = []
-    def walk(cat, group=None):
+
+    def walk(cat, path=None):
+        path = path or []
         children = cat.get("children", [])
-        has_criteria = bool(cat.get("criteria"))
-        if has_criteria or not children:
+        # Solo le categorie finali con criteri e peso sono valutabili.
+        if cat.get("criteria") and not children:
             item = dict(cat)
-            item["group_name"] = group
+            item["group_name"] = " / ".join(path) if path else ""
             out.append(item)
         for child in children:
-            walk(child, cat["name"] if group is None else f"{group} / {cat['name']}")
+            walk(child, path + [cat["name"]])
+
     for root in roots:
-        walk(root)
+        walk(root, [])
     return out
+
+
+def visit_items(visit_id: int):
+    with db() as c:
+        return [dict(r) for r in c.execute(
+            """
+            SELECT vi.*, c.name, c.icon, c.parent_id, p.name AS group_name
+            FROM visit_items vi
+            JOIN categories c ON c.id=vi.category_id
+            LEFT JOIN categories p ON p.id=c.parent_id
+            WHERE vi.visit_id=?
+            ORDER BY COALESCE(p.sort_order, c.sort_order), c.sort_order, vi.id
+            """, (visit_id,)
+        ).fetchall()]
+
+
+def grouped_rating_categories(active_only=True):
+    groups = []
+    by_group = {}
+    for cat in rating_categories(active_only):
+        group = cat.get("group_name") or "Altro"
+        by_group.setdefault(group, []).append(cat)
+    for name, cats in by_group.items():
+        groups.append({"name": name, "items": cats})
+    return groups
 
 
 def all_categories_flat():
@@ -237,7 +272,14 @@ def all_categories_flat():
 
 def visit_score(visit_id: int):
     with db() as c:
-        cats = c.execute("SELECT * FROM categories WHERE active=1 AND (SELECT COUNT(*) FROM criteria WHERE criteria.category_id=categories.id AND criteria.active=1)>0").fetchall()
+        cats = c.execute(
+            """
+            SELECT * FROM categories c
+            WHERE c.active=1
+              AND NOT EXISTS (SELECT 1 FROM categories ch WHERE ch.parent_id=c.id AND ch.active=1)
+              AND EXISTS (SELECT 1 FROM criteria cr WHERE cr.category_id=c.id AND cr.active=1)
+            """
+        ).fetchall()
         weighted = 0.0
         weights = 0.0
         category_scores = {}
@@ -333,6 +375,7 @@ def bar_detail(request: Request, bar_id: int):
         ).fetchall()
     for v in visits:
         v["score"], _ = visit_score(v["id"])
+        v["items"] = visit_items(v["id"])
     return render(request, "bar_detail.html", {"bar": dict(bar), "visits": visits, "score": bar_summary(bar_id), "category_avg": category_avg})
 
 
@@ -341,16 +384,33 @@ def visit_form(request: Request, bar_id: int):
     require_login(request)
     with db() as c:
         bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
-    return render(request, "visit_form.html", {"bar": dict(bar), "cats": rating_categories(True), "today": date.today().isoformat()})
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "items": []})
 
 
 @app.post("/bars/{bar_id}/visit")
-def add_visit(request: Request, bar_id: int, visited_at: str = Form(...), drink: str = Form(""), food: str = Form(""), total_price: Optional[float] = Form(None), wait_minutes: Optional[int] = Form(None), crowd: str = Form(""), notes: str = Form("")):
+async def add_visit(request: Request, bar_id: int):
     require_login(request)
-    form = None
+    form = await request.form()
+    visited_at = form.get("visited_at") or date.today().isoformat()
+    total_price = float(form["total_price"]) if form.get("total_price") else None
+    wait_minutes = int(form["wait_minutes"]) if form.get("wait_minutes") else None
     with db() as c:
-        cur = c.execute("INSERT INTO visits(bar_id,visited_at,drink,food,total_price,wait_minutes,crowd,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?)", (bar_id, visited_at, drink, food, total_price, wait_minutes, crowd, notes, datetime.now().isoformat()))
+        cur = c.execute(
+            "INSERT INTO visits(bar_id,visited_at,drink,food,total_price,wait_minutes,crowd,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (bar_id, visited_at, "", "", total_price, wait_minutes, form.get("crowd", ""), form.get("notes", ""), datetime.now().isoformat())
+        )
         visit_id = cur.lastrowid
+        for key, value in form.items():
+            if not key.startswith("item_") or not value:
+                continue
+            idx = key.split("_", 1)[1]
+            qty_raw = form.get(f"qty_{idx}") or "1"
+            note = form.get(f"item_note_{idx}") or ""
+            try:
+                qty = max(1, int(qty_raw))
+            except ValueError:
+                qty = 1
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,note) VALUES(?,?,?,?)", (visit_id, int(value), qty, note))
     return RedirectResponse(f"/visits/{visit_id}/ratings", status_code=303)
 
 
@@ -359,8 +419,13 @@ def ratings_form(request: Request, visit_id: int):
     require_login(request)
     with db() as c:
         visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
         bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
-    return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": rating_categories(True)})
+        selected_ids = [r["category_id"] for r in c.execute("SELECT DISTINCT category_id FROM visit_items WHERE visit_id=?", (visit_id,)).fetchall()]
+        existing = {f"{r['category_id']}_{r['criterion_id']}": r["score"] for r in c.execute("SELECT category_id, criterion_id, score FROM ratings WHERE visit_id=?", (visit_id,)).fetchall()}
+    cats = [cat for cat in rating_categories(True) if cat["id"] in selected_ids]
+    return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": cats, "existing": existing})
 
 
 @app.post("/visits/{visit_id}/ratings")
@@ -385,6 +450,65 @@ async def save_ratings_async(request: Request, visit_id: int):
     return RedirectResponse(f"/bars/{bar_id}", status_code=303)
 
 
+@app.get("/visits/{visit_id}/edit", response_class=HTMLResponse)
+def edit_visit_form(request: Request, visit_id: int):
+    require_login(request)
+    with db() as c:
+        visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": dict(visit), "items": visit_items(visit_id)})
+
+
+@app.post("/visits/{visit_id}/edit")
+async def edit_visit_save(request: Request, visit_id: int):
+    require_login(request)
+    form = await request.form()
+    visited_at = form.get("visited_at") or date.today().isoformat()
+    total_price = float(form["total_price"]) if form.get("total_price") else None
+    wait_minutes = int(form["wait_minutes"]) if form.get("wait_minutes") else None
+    with db() as c:
+        visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        c.execute("UPDATE visits SET visited_at=?, total_price=?, wait_minutes=?, crowd=?, notes=? WHERE id=?", (visited_at, total_price, wait_minutes, form.get("crowd", ""), form.get("notes", ""), visit_id))
+        c.execute("DELETE FROM visit_items WHERE visit_id=?", (visit_id,))
+        selected = set()
+        for key, value in form.items():
+            if not key.startswith("item_") or not value:
+                continue
+            idx = key.split("_", 1)[1]
+            qty_raw = form.get(f"qty_{idx}") or "1"
+            note = form.get(f"item_note_{idx}") or ""
+            try:
+                qty = max(1, int(qty_raw))
+            except ValueError:
+                qty = 1
+            selected.add(int(value))
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,note) VALUES(?,?,?,?)", (visit_id, int(value), qty, note))
+        # Se cambiano gli alimenti, eliminiamo i voti delle categorie non più selezionate.
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            c.execute(f"DELETE FROM ratings WHERE visit_id=? AND category_id NOT IN ({placeholders})", (visit_id, *selected))
+        else:
+            c.execute("DELETE FROM ratings WHERE visit_id=?", (visit_id,))
+        bar_id = visit["bar_id"]
+    return RedirectResponse(f"/visits/{visit_id}/ratings", status_code=303)
+
+
+@app.post("/visits/{visit_id}/delete")
+def delete_visit(request: Request, visit_id: int):
+    require_login(request)
+    with db() as c:
+        visit = c.execute("SELECT bar_id FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        bar_id = visit["bar_id"]
+        c.execute("DELETE FROM visits WHERE id=?", (visit_id,))
+    return RedirectResponse(f"/bars/{bar_id}", status_code=303)
+
+
 @app.get("/settings", response_class=HTMLResponse)
 def settings(request: Request):
     require_login(request)
@@ -396,7 +520,7 @@ def add_category(request: Request, parent_id: Optional[int] = Form(None), name: 
     require_login(request)
     parent = parent_id if parent_id not in (0, None) else None
     with db() as c:
-        c.execute("INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)", (parent, name, icon, weight, sort_order))
+        c.execute("INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)", (parent, name, icon, weight if parent else 0, sort_order))
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -433,10 +557,11 @@ def export_csv(request: Request):
     os.close(fd)
     with db() as c, open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["bar", "data", "bevanda", "cibo", "prezzo", "voto_globale", "note"])
+        writer.writerow(["bar", "data", "elementi", "prezzo", "voto_globale", "note"])
         rows = c.execute("SELECT v.*, b.name AS bar_name FROM visits v JOIN bars b ON b.id=v.bar_id ORDER BY visited_at DESC").fetchall()
         for r in rows:
-            writer.writerow([r["bar_name"], r["visited_at"], r["drink"], r["food"], r["total_price"], visit_score(r["id"])[0], r["notes"]])
+            items = "; ".join([f"{it['quantity']}x {it['name']}" + (f" ({it['note']})" if it['note'] else "") for it in visit_items(r["id"])])
+            writer.writerow([r["bar_name"], r["visited_at"], items, r["total_price"], visit_score(r["id"])[0], r["notes"]])
     return FileResponse(path, media_type="text/csv", filename="appuccino-export.csv")
 
 

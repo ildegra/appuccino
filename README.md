@@ -91,3 +91,12 @@ Funzioni previste:
 - mappa
 - PWA mobile
 - import/export completo
+
+## Versione 0.3
+
+- Le macrocategorie sono contenitori senza peso.
+- La nuova visita permette di selezionare gli elementi ordinati da menu a discesa.
+- È possibile inserire più elementi nella stessa visita, anche della stessa macrocategoria.
+- La pagina dei voti mostra solo gli elementi effettivamente ordinati.
+- Le visite possono essere modificate o cancellate.
+- Quando si modifica una visita, i voti delle categorie non più selezionate vengono rimossi.

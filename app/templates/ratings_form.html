@@ -1,3 +1,20 @@
 {% extends "base.html" %}{% block content %}
-<h1>Voti · {{ bar.name }}</h1><p class="muted">Compila solo ciò che vuoi valutare. Il voto globale userà solo le categorie compilate.</p><form method="post" action="/visits/{{ visit.id }}/ratings/save" class="stack">{% for cat in cats %}<section class="card"><h2>{% if cat.group_name %}<small>{{ cat.group_name }} / </small>{% endif %}{{ cat.icon }} {{ cat.name }} <small>peso {{ cat.weight }}%</small></h2><div class="rating-grid">{% for crit in cat.criteria %}<label>{{ crit.name }}<input type="number" min="1" max="5" step="0.5" name="score_{{ cat.id }}_{{ crit.id }}" placeholder="1-5"></label>{% endfor %}</div></section>{% endfor %}<button>Salva visita</button></form>
+<h1>Voti · {{ bar.name }}</h1>
+<p class="muted">Sono mostrati solo gli elementi selezionati nella visita. Il voto globale userà solo le categorie compilate.</p>
+<form method="post" action="/visits/{{ visit.id }}/ratings/save" class="stack">
+{% for cat in cats %}
+<section class="card">
+  <h2>{% if cat.group_name %}<small>{{ cat.group_name }} / </small>{% endif %}{{ cat.icon }} {{ cat.name }} <small>peso {{ cat.weight }}%</small></h2>
+  <div class="rating-grid">
+    {% for crit in cat.criteria %}
+      {% set k = cat.id|string + '_' + crit.id|string %}
+      <label>{{ crit.name }}<input type="number" min="1" max="5" step="0.5" name="score_{{ cat.id }}_{{ crit.id }}" placeholder="1-5" value="{{ existing.get(k, '') }}"></label>
+    {% endfor %}
+  </div>
+</section>
+{% else %}
+<section class="card"><p>Nessun elemento valutabile selezionato. Modifica la visita e aggiungi almeno un elemento ordinato.</p></section>
+{% endfor %}
+<div class="actions"><button>Salva visita</button><a class="button secondary" href="/visits/{{ visit.id }}/edit">Modifica elementi</a></div>
+</form>
 {% endblock %}
