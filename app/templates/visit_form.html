@@ -1,38 +1,45 @@
-{% extends "base.html" %}{% block content %}
-<h1>{% if visit %}Modifica visita{% else %}Nuova visita{% endif %} · {{ bar.name }}</h1>
-<p class="muted">Scegli solo ciò che hai ordinato. Nella schermata successiva voterai soltanto questi elementi.</p>
-<form method="post" action="{% if visit %}/visits/{{ visit.id }}/edit{% else %}/bars/{{ bar.id }}/visit{% endif %}" class="card stack">
-  <label>Data<input type="date" name="visited_at" value="{{ visit.visited_at if visit else today }}" required></label>
-  <div class="grid two compact">
-    <input type="number" step="0.01" name="total_price" placeholder="Prezzo totale" value="{{ visit.total_price if visit and visit.total_price is not none else '' }}">
-    <input type="number" name="wait_minutes" placeholder="Attesa in minuti" value="{{ visit.wait_minutes if visit and visit.wait_minutes is not none else '' }}">
-  </div>
-  <select name="crowd">
-    {% set crowd = visit.crowd if visit else '' %}
-    <option value="">Affollamento</option>
-    {% for opt in ['vuoto','poco affollato','normale','pieno','troppo pieno'] %}<option {% if crowd == opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}
-  </select>
-  <h2>Elementi ordinati</h2>
-  <p class="muted">Puoi usare più righe, anche nella stessa macrocategoria.</p>
-  {% set existing_count = items|length %}
-  {% for i in range(1, 9) %}
-    {% set existing = items[i-1] if i <= existing_count else None %}
-    <div class="order-row">
-      <select name="item_{{ i }}">
-        <option value="">— scegli elemento —</option>
-        {% for group in groups %}
-          <optgroup label="{{ group.name }}">
-            {% for cat in group.items %}
-              <option value="{{ cat.id }}" {% if existing and existing.category_id == cat.id %}selected{% endif %}>{{ cat.icon }} {{ cat.name }}</option>
-            {% endfor %}
-          </optgroup>
-        {% endfor %}
-      </select>
-      <input type="number" min="1" name="qty_{{ i }}" value="{{ existing.quantity if existing else 1 }}" title="Quantità">
-      <input name="item_note_{{ i }}" placeholder="nota, es. crema / grande" value="{{ existing.note if existing else '' }}">
+{% extends "base.html" %}
+{% block page_title %}<h1>{% if visit %}Modifica visita{% else %}Nuova visita{% endif %}</h1>{% endblock %}
+{% block content %}
+<section class="panel visit-wizard">
+  <div class="wizard-head"><div><span class="step-dot">1</span><h2>{{ bar.name }}</h2></div><p class="muted">Scegli solo ciò che hai ordinato; voterai soltanto questi elementi.</p></div>
+  <form method="post" action="{% if visit %}/visits/{{ visit.id }}/edit{% else %}/bars/{{ bar.id }}/visit{% endif %}" class="stack">
+    <div class="form-grid three">
+      <label>Data<input type="date" name="visited_at" value="{{ visit.visited_at if visit else today }}" required></label>
+      <label>Prezzo totale<input type="number" step="0.01" name="total_price" placeholder="3.80" value="{{ visit.total_price if visit and visit.total_price is not none else '' }}"></label>
+      <label>Attesa<input type="number" name="wait_minutes" placeholder="minuti" value="{{ visit.wait_minutes if visit and visit.wait_minutes is not none else '' }}"></label>
     </div>
-  {% endfor %}
-  <textarea name="notes" placeholder="Note generali">{{ visit.notes if visit else '' }}</textarea>
-  <button>Continua ai voti</button>
-</form>
+    <label>Affollamento
+      <select name="crowd">
+        {% set crowd = visit.crowd if visit else '' %}
+        <option value="">Non indicato</option>
+        {% for opt in ['vuoto','poco affollato','normale','pieno','troppo pieno'] %}<option {% if crowd == opt %}selected{% endif %}>{{ opt }}</option>{% endfor %}
+      </select>
+    </label>
+
+    <div class="section-title"><span class="step-dot">2</span><h2>Elementi ordinati</h2></div>
+    <div class="order-list">
+    {% set existing_count = items|length %}
+    {% for i in range(1, 9) %}
+      {% set existing = items[i-1] if i <= existing_count else None %}
+      <div class="order-row">
+        <select name="item_{{ i }}">
+          <option value="">— scegli elemento —</option>
+          {% for group in groups %}
+            <optgroup label="{{ group.name }}">
+              {% for cat in group.items %}
+                <option value="{{ cat.id }}" {% if existing and existing.category_id == cat.id %}selected{% endif %}>{{ cat.icon }} {{ cat.name }}</option>
+              {% endfor %}
+            </optgroup>
+          {% endfor %}
+        </select>
+        <input type="number" min="1" name="qty_{{ i }}" value="{{ existing.quantity if existing else 1 }}" title="Quantità">
+        <input name="item_note_{{ i }}" placeholder="nota: es. crema, integrale, grande" value="{{ existing.note if existing else '' }}">
+      </div>
+    {% endfor %}
+    </div>
+    <textarea name="notes" placeholder="Note generali: qui i croissant non sono freschissimi, fanno pasticceria propria, tramezzino perfetto...">{{ visit.notes if visit else '' }}</textarea>
+    <div class="actions"><button>Continua ai voti</button><a class="button secondary" href="/bars/{{ bar.id }}">Annulla</a></div>
+  </form>
+</section>
 {% endblock %}

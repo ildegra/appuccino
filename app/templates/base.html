@@ -7,16 +7,29 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="/">☕ Appuccino</a>
-  <nav>
-    <a href="/">Bar</a>
-    <a href="/settings">Categorie</a>
-    <a href="/user">Utente</a>
-    <a href="/export.csv">Export</a>
-    <a href="/logout">Esci</a>
-  </nav>
-</header>
-<main class="container">{% block content %}{% endblock %}</main>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Appuccino home">
+      <span class="brand-mark"><span class="cup">☕</span><span class="stars">★</span></span>
+      <span>Appuccino</span>
+    </a>
+    <nav class="side-nav">
+      <a href="/" class="nav-item">⌂ <span>Dashboard</span></a>
+      <a href="/" class="nav-item">☕ <span>Bar</span></a>
+      <a href="/settings" class="nav-item">☷ <span>Categorie</span></a>
+      <a href="/user" class="nav-item">♙ <span>Profilo utente</span></a>
+      <a href="/export.csv" class="nav-item">⇩ <span>Export CSV</span></a>
+      <a href="/logout" class="nav-item">↪ <span>Logout</span></a>
+    </nav>
+    <div class="sidebar-footer">v0.4.1 · {{ current_user.display_name or current_user.username if current_user else '' }}</div>
+  </aside>
+  <div class="main-area">
+    <header class="page-topbar">
+      <div>{% block page_title %}{% endblock %}</div>
+      <span class="version-badge">v0.4.1</span>
+    </header>
+    <main class="container">{% block content %}{% endblock %}</main>
+  </div>
+</div>
 </body>
 </html>

@@ -1,102 +1,50 @@
-# Appuccino
+# Appuccino v0.4.1
 
-Appuccino è una piccola web app personale per recensire i bar dove fai colazione.
+Web app locale per registrare e valutare bar/colazioni.
 
-Prima versione:
+## Funzioni attuali
 
-- FastAPI + SQLite
-- Docker singolo tramite Docker Compose
-- login con username/password
-- gestione bar
-- gestione visite
-- categorie, criteri e pesi configurabili
-- calcolo voto globale pesato
-- export CSV
-- interfaccia responsive chiara con accenti caffè/cappuccino
+- Login con utente/password
+- Profilo utente e cambio password
+- Database SQLite
+- Gestione bar
+- Nuova visita con elementi ordinati selezionabili da menu
+- Più elementi per visita, anche nella stessa macrocategoria
+- Macrocategorie solo contenitori
+- Categorie valutabili con criteri e peso
+- Voto globale pesato
+- Modifica e cancellazione visite
+- Export CSV
+- Interfaccia aggiornata in stile app, con menu laterale, card e tema caffè/cappuccino
 
-## Deploy consigliato con Portainer da Git
+## Deploy con Portainer
 
-Portainer può deployare uno stack da repository Git e clona l'intero repository prima del deploy. Questo è il modo più comodo per un progetto composto da più file.
+Carica il contenuto di questa cartella in un repository Git e usa Stacks → Add stack → Git Repository.
 
-### 1. Crea un repository GitHub
+Variabili consigliate:
 
-1. Vai su GitHub.
-2. Crea un nuovo repository, per esempio `appuccino`.
-3. Può essere pubblico o privato.
-4. Carica tutti i file di questa cartella nel repository.
-
-Struttura attesa:
-
-```text
-appuccino/
-├── app/
-├── Dockerfile
-├── docker-compose.yml
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
-### 2. Deploy in Portainer
-
-1. Apri Portainer.
-2. Vai su **Stacks**.
-3. Clicca **Add stack**.
-4. Nome stack: `appuccino`.
-5. Scegli **Git Repository**.
-6. Repository URL: URL del tuo repository GitHub.
-7. Reference: `main`.
-8. Compose path: `docker-compose.yml`.
-9. Se il repository è privato, abilita l'autenticazione e inserisci le credenziali/token.
-10. Nella sezione Environment variables imposta almeno:
-
-```text
+```env
 APP_USERNAME=admin
-APP_PASSWORD=una-password-lunga
-SECRET_KEY=una-stringa-lunga-casuale
+APP_PASSWORD=cambia-questa-password
+SECRET_KEY=stringa-lunga-casuale
 ```
 
-11. Clicca **Deploy the stack**.
+Porta predefinita:
 
-L'app sarà disponibile su:
+```text
+8033
+```
+
+URL:
 
 ```text
 http://IP_DEL_RASPBERRY:8033
 ```
 
-## Esposizione fuori casa
+## Aggiornamento
 
-Per usarla fuori casa è meglio esporla dietro reverse proxy HTTPS, ad esempio Nginx Proxy Manager, Cloudflare Tunnel o il reverse proxy che già usi. Non pubblicare direttamente la porta 8033 senza HTTPS.
+Dopo aver aggiornato il repository:
 
-## Dati e backup
-
-Il database SQLite e gli upload sono salvati nel volume Docker `appuccino_data` montato su `/data` nel container.
-
-File principale:
-
-```text
-/data/appuccino.sqlite3
-```
-
-Per un backup basta salvare il volume o esportare il database dall'interfaccia.
-
-## Sviluppo futuro
-
-Funzioni previste:
-
-- modifica/eliminazione bar e visite
-- grafici
-- classifiche filtrate
-- foto multiple
-- mappa
-- PWA mobile
-- import/export completo
-
-## Versione 0.3
-
-- Le macrocategorie sono contenitori senza peso.
-- La nuova visita permette di selezionare gli elementi ordinati da menu a discesa.
-- È possibile inserire più elementi nella stessa visita, anche della stessa macrocategoria.
-- La pagina dei voti mostra solo gli elementi effettivamente ordinati.
-- Le visite possono essere modificate o cancellate.
-- Quando si modifica una visita, i voti delle categorie non più selezionate vengono rimossi.
+1. Portainer → Stack Appuccino
+2. Pull and redeploy
+3. Se il browser mostra ancora la vecchia grafica, svuota la cache o usa Ctrl+F5

@@ -1,9 +1,10 @@
-{% extends "base.html" %}{% block content %}
-<h1>Utente</h1>
+{% extends "base.html" %}
+{% block page_title %}<h1>Profilo utente</h1>{% endblock %}
+{% block content %}
 {% if message == 'saved' %}<div class="notice">Dati salvati. Per sicurezza effettua di nuovo il login.</div>{% endif %}
 {% if error == 'password' %}<div class="error">Password attuale non corretta.</div>{% endif %}
 {% if error == 'confirm' %}<div class="error">La nuova password e la conferma non coincidono.</div>{% endif %}
-<section class="card"><form method="post" action="/user" class="stack">
+<section class="panel narrow"><form method="post" action="/user" class="stack">
 <label>Nome utente<input name="username" value="{{ current_user.username }}" required></label>
 <label>Nome visualizzato<input name="display_name" value="{{ current_user.display_name or '' }}"></label>
 <hr>

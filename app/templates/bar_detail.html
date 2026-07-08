@@ -1,6 +1,51 @@
-{% extends "base.html" %}{% block content %}
-<section class="hero"><div><h1>{{ bar.name }}</h1><p>{{ bar.address }} {{ bar.city }}</p></div><div class="score">{{ score if score else '—' }}<small>/5</small></div></section>
-<div class="actions"><a class="button" href="/bars/{{ bar.id }}/visit">Nuova visita</a></div>
-<section class="grid two"><div class="card"><h2>Profilo</h2>{% for r in category_avg %}<div class="metric"><span>{{ r.icon }} {{ r.name }}</span><b>{{ '%.2f'|format(r.avg_score) }}</b></div>{% else %}<p>Ancora nessun voto.</p>{% endfor %}<p>{{ bar.notes }}</p></div>
-<div class="card"><h2>Visite</h2>{% for v in visits %}<div class="visit"><div><b>{{ v.visited_at }}</b><small>{% for item in v.items %}{{ item.quantity }}× {{ item.icon }} {{ item.name }}{% if not loop.last %}, {% endif %}{% endfor %} · {{ v.total_price if v.total_price else '—' }} €</small><p>{{ v.notes }}</p><div class="actions small-actions"><a href="/visits/{{ v.id }}/edit">Modifica</a><form method="post" action="/visits/{{ v.id }}/delete" onsubmit="return confirm('Cancellare questa visita?')"><button class="link-button">Cancella</button></form></div></div><strong>{{ v.score if v.score else '—' }}</strong></div>{% else %}<p>Nessuna visita registrata.</p>{% endfor %}</div></section>
+{% extends "base.html" %}
+{% block page_title %}<h1>{{ bar.name }}</h1>{% endblock %}
+{% block content %}
+<section class="bar-hero panel">
+  <div>
+    <div class="eyebrow">Scheda bar</div>
+    <h2>☕ {{ bar.name }}</h2>
+    <p class="muted">{{ bar.city }}{% if bar.address %} · {{ bar.address }}{% endif %}</p>
+    {% if bar.notes %}<p>{{ bar.notes }}</p>{% endif %}
+  </div>
+  <div class="hero-score"><span>Voto medio</span><b>{{ score if score else '—' }}</b></div>
+  <a class="button" href="/bars/{{ bar.id }}/visit">+ Nuova visita</a>
+</section>
+
+<section class="layout-grid">
+  <div class="panel">
+    <div class="panel-head"><h2>Profilo del bar</h2></div>
+    {% if category_avg %}
+      <div class="category-score-list">
+      {% for c in category_avg %}
+        <div class="category-score"><span>{{ c.icon }} {{ c.name }}</span><b>{{ '%.1f'|format(c.avg_score) }}</b></div>
+      {% endfor %}
+      </div>
+    {% else %}<p class="muted">Ancora nessun voto registrato.</p>{% endif %}
+  </div>
+
+  <div class="panel wide">
+    <div class="panel-head"><h2>Visite</h2></div>
+    <div class="timeline">
+    {% for v in visits %}
+      <article class="visit-card">
+        <div class="visit-date"><b>{{ v.visited_at }}</b><span>{{ v.score if v.score else '—' }}</span></div>
+        <div class="visit-body">
+          <div class="chips">
+          {% for item in v["items"] %}
+            <span class="chip">{{ item.quantity }}× {{ item.icon }} {{ item.name }}{% if item.note %} · {{ item.note }}{% endif %}</span>
+          {% endfor %}
+          </div>
+          <small class="muted">{% if v.total_price %}{{ v.total_price }} €{% else %}prezzo non indicato{% endif %}{% if v.wait_minutes %} · attesa {{ v.wait_minutes }} min{% endif %}{% if v.crowd %} · {{ v.crowd }}{% endif %}</small>
+          {% if v.notes %}<p>{{ v.notes }}</p>{% endif %}
+          <div class="actions small-actions">
+            <a href="/visits/{{ v.id }}/edit">Modifica</a>
+            <form method="post" action="/visits/{{ v.id }}/delete" onsubmit="return confirm('Cancellare questa visita?')"><button class="link-button">Cancella</button></form>
+          </div>
+        </div>
+      </article>
+    {% else %}<p>Nessuna visita registrata.</p>{% endfor %}
+    </div>
+  </div>
+</section>
 {% endblock %}
