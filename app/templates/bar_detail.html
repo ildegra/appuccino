@@ -9,7 +9,7 @@
     {% if bar.notes %}<p>{{ bar.notes }}</p>{% endif %}
   </div>
   <div class="hero-score"><span>Voto medio</span><b>{{ score if score else '—' }}</b></div>
-  <a class="button" href="/bars/{{ bar.id }}/visit">+ Nuova visita</a>
+  <div class="actions"><a class="button" href="/bars/{{ bar.id }}/visit">+ Nuova visita</a><a class="button secondary" href="/bars/{{ bar.id }}/edit">Modifica bar</a></div>
 </section>
 
 <section class="layout-grid">

@@ -27,7 +27,7 @@
           <option value="">— scegli elemento —</option>
           {% for group in groups %}
             <optgroup label="{{ group.name }}">
-              {% for cat in group.items %}
+              {% for cat in group["items"] %}
                 <option value="{{ cat.id }}" {% if existing and existing.category_id == cat.id %}selected{% endif %}>{{ cat.icon }} {{ cat.name }}</option>
               {% endfor %}
             </optgroup>

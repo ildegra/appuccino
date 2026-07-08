@@ -356,6 +356,29 @@ def add_bar(request: Request, name: str = Form(...), address: str = Form(""), ci
     return RedirectResponse("/", status_code=303)
 
 
+
+
+@app.get("/bars/{bar_id}/edit", response_class=HTMLResponse)
+def edit_bar_form(request: Request, bar_id: int):
+    require_login(request)
+    with db() as c:
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+    return render(request, "bar_form.html", {"bar": dict(bar)})
+
+
+@app.post("/bars/{bar_id}/edit")
+def edit_bar_save(request: Request, bar_id: int, name: str = Form(...), address: str = Form(""), city: str = Form(""), notes: str = Form("")):
+    require_login(request)
+    with db() as c:
+        bar = c.execute("SELECT id FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+        c.execute("UPDATE bars SET name=?, address=?, city=?, notes=? WHERE id=?", (name, address, city, notes, bar_id))
+    return RedirectResponse(f"/bars/{bar_id}", status_code=303)
+
+
 @app.get("/bars/{bar_id}", response_class=HTMLResponse)
 def bar_detail(request: Request, bar_id: int):
     require_login(request)
