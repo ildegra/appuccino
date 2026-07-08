@@ -16,17 +16,18 @@
     <nav class="side-nav">
       <a href="/" class="nav-item">⌂ <span>Dashboard</span></a>
       <a href="/" class="nav-item">☕ <span>Bar</span></a>
+      <a href="/rankings" class="nav-item">🏆 <span>Classifiche</span></a>
       <a href="/settings" class="nav-item">☷ <span>Categorie</span></a>
       <a href="/user" class="nav-item">♙ <span>Profilo utente</span></a>
       <a href="/export.csv" class="nav-item">⇩ <span>Export CSV</span></a>
       <a href="/logout" class="nav-item">↪ <span>Logout</span></a>
     </nav>
-    <div class="sidebar-footer">v0.4.3 · {{ current_user.display_name or current_user.username if current_user else '' }}</div>
+    <div class="sidebar-footer">v0.5.0 · {{ current_user.display_name or current_user.username if current_user else '' }}</div>
   </aside>
   <div class="main-area">
     <header class="page-topbar">
       <div>{% block page_title %}{% endblock %}</div>
-      <span class="version-badge">v0.4.3</span>
+      <span class="version-badge">v0.5.0</span>
     </header>
     <main class="container">{% block content %}{% endblock %}</main>
   </div>

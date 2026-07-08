@@ -302,6 +302,81 @@ def bar_summary(bar_id: int):
     return round(sum(scores) / len(scores), 2) if scores else None
 
 
+def bar_rankings():
+    with db() as c:
+        bars = [dict(r) for r in c.execute("SELECT * FROM bars ORDER BY name").fetchall()]
+    for b in bars:
+        b["score"] = bar_summary(b["id"])
+        with db() as c:
+            b["visits_count"] = c.execute("SELECT COUNT(*) AS n FROM visits WHERE bar_id=?", (b["id"],)).fetchone()["n"]
+    return sorted(bars, key=lambda x: (-(x["score"] or 0), -x["visits_count"], x["name"].lower()))
+
+
+def product_rankings(min_visits: int = 1):
+    """Classifiche dei singoli prodotti/categorie, per bar e globali.
+
+    Il voto prodotto è calcolato dalle valutazioni della categoria in ogni visita.
+    Se un prodotto è ordinato più volte nella stessa visita viene contato una volta per quella visita,
+    così non gonfia artificialmente la media.
+    """
+    with db() as c:
+        rows = [dict(r) for r in c.execute(
+            """
+            SELECT
+                c.id AS category_id,
+                c.name AS product_name,
+                c.icon AS product_icon,
+                p.name AS group_name,
+                b.id AS bar_id,
+                b.name AS bar_name,
+                COUNT(DISTINCT v.id) AS visits_count,
+                AVG(r.score) AS avg_score,
+                AVG(v.total_price) AS avg_price
+            FROM visit_items vi
+            JOIN visits v ON v.id = vi.visit_id
+            JOIN bars b ON b.id = v.bar_id
+            JOIN categories c ON c.id = vi.category_id
+            LEFT JOIN categories p ON p.id = c.parent_id
+            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id
+            WHERE c.active = 1
+            GROUP BY c.id, b.id
+            HAVING visits_count >= ?
+            ORDER BY c.name COLLATE NOCASE, avg_score DESC, visits_count DESC, b.name COLLATE NOCASE
+            """, (min_visits,)
+        ).fetchall()]
+
+        global_rows = [dict(r) for r in c.execute(
+            """
+            SELECT
+                c.id AS category_id,
+                c.name AS product_name,
+                c.icon AS product_icon,
+                p.name AS group_name,
+                COUNT(DISTINCT v.id) AS visits_count,
+                AVG(r.score) AS avg_score,
+                AVG(v.total_price) AS avg_price
+            FROM visit_items vi
+            JOIN visits v ON v.id = vi.visit_id
+            JOIN categories c ON c.id = vi.category_id
+            LEFT JOIN categories p ON p.id = c.parent_id
+            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id
+            WHERE c.active = 1
+            GROUP BY c.id
+            HAVING visits_count >= ?
+            ORDER BY avg_score DESC, visits_count DESC, c.name COLLATE NOCASE
+            """, (min_visits,)
+        ).fetchall()]
+
+    grouped = []
+    by_product = {}
+    for row in rows:
+        by_product.setdefault(row["category_id"], {"product": row, "bars": []})["bars"].append(row)
+    for data in by_product.values():
+        grouped.append(data)
+    grouped.sort(key=lambda g: (g["product"].get("group_name") or "", g["product"]["product_name"].lower()))
+    return grouped, global_rows
+
+
 @app.on_event("startup")
 def startup():
     init_db()
@@ -530,6 +605,20 @@ def delete_visit(request: Request, visit_id: int):
         bar_id = visit["bar_id"]
         c.execute("DELETE FROM visits WHERE id=?", (visit_id,))
     return RedirectResponse(f"/bars/{bar_id}", status_code=303)
+
+
+
+@app.get("/rankings", response_class=HTMLResponse)
+def rankings(request: Request, min_visits: int = 1):
+    require_login(request)
+    min_visits = max(1, int(min_visits or 1))
+    product_groups, global_products = product_rankings(min_visits)
+    return render(request, "rankings.html", {
+        "bar_rankings": bar_rankings(),
+        "product_groups": product_groups,
+        "global_products": global_products,
+        "min_visits": min_visits,
+    })
 
 
 @app.get("/settings", response_class=HTMLResponse)
