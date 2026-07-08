@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import hashlib
+import secrets
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -31,11 +33,34 @@ def db():
     return conn
 
 
+def hash_password(password: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
+    return f"pbkdf2_sha256${salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, salt, digest = stored.split("$", 2)
+        if algo != "pbkdf2_sha256":
+            return False
+        return secrets.compare_digest(hash_password(password, salt), stored)
+    except Exception:
+        return False
+
+
 def init_db():
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with db() as c:
         c.executescript(
             """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS bars (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -48,6 +73,7 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
                 name TEXT NOT NULL,
                 icon TEXT DEFAULT '⭐',
                 weight REAL NOT NULL DEFAULT 10,
@@ -84,38 +110,78 @@ def init_db():
             );
             """
         )
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(categories)").fetchall()]
+        if "parent_id" not in cols:
+            c.execute("ALTER TABLE categories ADD COLUMN parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+
+        existing_users = c.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        if existing_users == 0:
+            c.execute(
+                "INSERT INTO users(username,password_hash,display_name,created_at) VALUES(?,?,?,?)",
+                (USERNAME, hash_password(PASSWORD), USERNAME, datetime.now().isoformat()),
+            )
+
         existing = c.execute("SELECT COUNT(*) AS n FROM categories").fetchone()["n"]
         if existing == 0:
             defaults = [
-                ("Caffè", "☕", 30, 1, ["Gusto", "Temperatura", "Crema", "Presentazione"]),
-                ("Brioche", "🥐", 25, 2, ["Freschezza", "Impasto", "Farcitura", "Varietà"]),
-                ("Prezzo", "💶", 15, 3, ["Rapporto qualità/prezzo"]),
-                ("Servizio", "😊", 15, 4, ["Gentilezza", "Rapidità", "Precisione"]),
-                ("Ambiente", "🪑", 10, 5, ["Comfort", "Rumore", "Atmosfera"]),
-                ("Pulizia", "🧼", 5, 6, ["Bancone", "Tavoli", "Bagno"]),
+                ("Bevande", "☕", 1, [
+                    ("Caffè", "☕", 25, ["Gusto", "Temperatura", "Crema", "Presentazione"]),
+                    ("Cappuccino", "🥛", 25, ["Gusto", "Schiuma", "Temperatura", "Equilibrio"]),
+                    ("Acqua", "💧", 2, ["Disponibilità", "Prezzo"]),
+                ]),
+                ("Dolci", "🥐", 2, [
+                    ("Croissant", "🥐", 25, ["Freschezza", "Impasto", "Farcitura", "Varietà"]),
+                    ("Paste", "🍰", 10, ["Freschezza", "Qualità", "Varietà"]),
+                ]),
+                ("Salati", "🥪", 3, [
+                    ("Tramezzino", "🥪", 8, ["Freschezza", "Farcitura", "Prezzo"]),
+                    ("Panino", "🥖", 8, ["Pane", "Farcitura", "Prezzo"]),
+                    ("Pizzetta", "🍕", 8, ["Impasto", "Condimento", "Temperatura"]),
+                ]),
+                ("Esperienza", "⭐", 4, [
+                    ("Prezzo", "💶", 15, ["Rapporto qualità/prezzo"]),
+                    ("Servizio", "😊", 15, ["Gentilezza", "Rapidità", "Precisione"]),
+                    ("Ambiente", "🪑", 10, ["Comfort", "Rumore", "Atmosfera"]),
+                    ("Pulizia", "🧼", 5, ["Bancone", "Tavoli", "Bagno"]),
+                ]),
             ]
-            for name, icon, weight, order, crits in defaults:
-                cur = c.execute(
-                    "INSERT INTO categories(name, icon, weight, sort_order, active) VALUES (?, ?, ?, ?, 1)",
-                    (name, icon, weight, order),
+            for group_name, group_icon, group_order, children in defaults:
+                group_cur = c.execute(
+                    "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(NULL,?,?,?,?,1)",
+                    (group_name, group_icon, 0, group_order),
                 )
-                cid = cur.lastrowid
-                for i, crit in enumerate(crits, start=1):
-                    c.execute(
-                        "INSERT INTO criteria(category_id, name, sort_order, active) VALUES (?, ?, ?, 1)",
-                        (cid, crit, i),
+                parent_id = group_cur.lastrowid
+                for child_order, (name, icon, weight, crits) in enumerate(children, start=1):
+                    cur = c.execute(
+                        "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)",
+                        (parent_id, name, icon, weight, child_order),
                     )
+                    cid = cur.lastrowid
+                    for i, crit in enumerate(crits, start=1):
+                        c.execute(
+                            "INSERT INTO criteria(category_id, name, sort_order, active) VALUES (?, ?, ?, 1)",
+                            (cid, crit, i),
+                        )
+
+
+def current_user(request: Request):
+    token = request.cookies.get("appuccino_session")
+    if not token:
+        return None
+    try:
+        data = signer.loads(token)
+    except BadSignature:
+        return None
+    user_id = data.get("uid")
+    if not user_id:
+        return None
+    with db() as c:
+        row = c.execute("SELECT id, username, display_name FROM users WHERE id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
 
 
 def is_logged(request: Request) -> bool:
-    token = request.cookies.get("appuccino_session")
-    if not token:
-        return False
-    try:
-        data = signer.loads(token)
-        return data.get("u") == USERNAME
-    except BadSignature:
-        return False
+    return current_user(request) is not None
 
 
 def require_login(request: Request):
@@ -124,23 +190,54 @@ def require_login(request: Request):
 
 
 def render(request: Request, template: str, context: dict):
-    context.update({"request": request, "app_name": APP_NAME})
+    context.update({"request": request, "app_name": APP_NAME, "current_user": current_user(request)})
     return templates.TemplateResponse(template, context)
 
 
 def categories_with_criteria(active_only=False):
     with db() as c:
-        q = "SELECT * FROM categories" + (" WHERE active=1" if active_only else "") + " ORDER BY sort_order, id"
-        cats = [dict(r) for r in c.execute(q).fetchall()]
-        for cat in cats:
+        where = "WHERE active=1" if active_only else ""
+        all_cats = [dict(r) for r in c.execute(f"SELECT * FROM categories {where} ORDER BY sort_order, id").fetchall()]
+        by_id = {cat["id"]: cat for cat in all_cats}
+        roots = []
+        for cat in all_cats:
+            cat["children"] = []
+            cat["criteria"] = []
+        for cat in all_cats:
             cq = "SELECT * FROM criteria WHERE category_id=?" + (" AND active=1" if active_only else "") + " ORDER BY sort_order, id"
             cat["criteria"] = [dict(r) for r in c.execute(cq, (cat["id"],)).fetchall()]
-        return cats
+            if cat.get("parent_id") and cat["parent_id"] in by_id:
+                by_id[cat["parent_id"]]["children"].append(cat)
+            else:
+                roots.append(cat)
+        return roots
+
+
+def rating_categories(active_only=True):
+    roots = categories_with_criteria(active_only)
+    out = []
+    def walk(cat, group=None):
+        children = cat.get("children", [])
+        has_criteria = bool(cat.get("criteria"))
+        if has_criteria or not children:
+            item = dict(cat)
+            item["group_name"] = group
+            out.append(item)
+        for child in children:
+            walk(child, cat["name"] if group is None else f"{group} / {cat['name']}")
+    for root in roots:
+        walk(root)
+    return out
+
+
+def all_categories_flat():
+    with db() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM categories ORDER BY COALESCE(parent_id, id), sort_order, id").fetchall()]
 
 
 def visit_score(visit_id: int):
     with db() as c:
-        cats = c.execute("SELECT * FROM categories WHERE active=1").fetchall()
+        cats = c.execute("SELECT * FROM categories WHERE active=1 AND (SELECT COUNT(*) FROM criteria WHERE criteria.category_id=categories.id AND criteria.active=1)>0").fetchall()
         weighted = 0.0
         weights = 0.0
         category_scores = {}
@@ -180,9 +277,11 @@ def login_get(request: Request):
 
 @app.post("/login")
 def login_post(username: str = Form(...), password: str = Form(...)):
-    if username == USERNAME and password == PASSWORD:
+    with db() as c:
+        user = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if user and verify_password(password, user["password_hash"]):
         resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie("appuccino_session", signer.dumps({"u": username}), httponly=True, samesite="lax")
+        resp.set_cookie("appuccino_session", signer.dumps({"uid": user["id"]}), httponly=True, samesite="lax")
         return resp
     return RedirectResponse("/login?error=1", status_code=303)
 
@@ -242,7 +341,7 @@ def visit_form(request: Request, bar_id: int):
     require_login(request)
     with db() as c:
         bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
-    return render(request, "visit_form.html", {"bar": dict(bar), "cats": categories_with_criteria(True), "today": date.today().isoformat()})
+    return render(request, "visit_form.html", {"bar": dict(bar), "cats": rating_categories(True), "today": date.today().isoformat()})
 
 
 @app.post("/bars/{bar_id}/visit")
@@ -261,7 +360,7 @@ def ratings_form(request: Request, visit_id: int):
     with db() as c:
         visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
         bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
-    return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": categories_with_criteria(True)})
+    return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": rating_categories(True)})
 
 
 @app.post("/visits/{visit_id}/ratings")
@@ -289,22 +388,24 @@ async def save_ratings_async(request: Request, visit_id: int):
 @app.get("/settings", response_class=HTMLResponse)
 def settings(request: Request):
     require_login(request)
-    return render(request, "settings.html", {"cats": categories_with_criteria(False)})
+    return render(request, "settings.html", {"cats": categories_with_criteria(False), "flat_cats": all_categories_flat()})
 
 
 @app.post("/settings/categories")
-def add_category(request: Request, name: str = Form(...), icon: str = Form("⭐"), weight: float = Form(10), sort_order: int = Form(99)):
+def add_category(request: Request, parent_id: Optional[int] = Form(None), name: str = Form(...), icon: str = Form("⭐"), weight: float = Form(10), sort_order: int = Form(99)):
     require_login(request)
+    parent = parent_id if parent_id not in (0, None) else None
     with db() as c:
-        c.execute("INSERT INTO categories(name,icon,weight,sort_order,active) VALUES(?,?,?,?,1)", (name, icon, weight, sort_order))
+        c.execute("INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)", (parent, name, icon, weight, sort_order))
     return RedirectResponse("/settings", status_code=303)
 
 
 @app.post("/settings/categories/{cat_id}")
-def update_category(request: Request, cat_id: int, name: str = Form(...), icon: str = Form("⭐"), weight: float = Form(10), sort_order: int = Form(0), active: Optional[str] = Form(None)):
+def update_category(request: Request, cat_id: int, parent_id: Optional[int] = Form(None), name: str = Form(...), icon: str = Form("⭐"), weight: float = Form(10), sort_order: int = Form(0), active: Optional[str] = Form(None)):
     require_login(request)
+    parent = parent_id if parent_id not in (0, None, cat_id) else None
     with db() as c:
-        c.execute("UPDATE categories SET name=?, icon=?, weight=?, sort_order=?, active=? WHERE id=?", (name, icon, weight, sort_order, 1 if active else 0, cat_id))
+        c.execute("UPDATE categories SET parent_id=?, name=?, icon=?, weight=?, sort_order=?, active=? WHERE id=?", (parent, name, icon, weight, sort_order, 1 if active else 0, cat_id))
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -337,3 +438,29 @@ def export_csv(request: Request):
         for r in rows:
             writer.writerow([r["bar_name"], r["visited_at"], r["drink"], r["food"], r["total_price"], visit_score(r["id"])[0], r["notes"]])
     return FileResponse(path, media_type="text/csv", filename="appuccino-export.csv")
+
+
+@app.get("/user", response_class=HTMLResponse)
+def user_settings(request: Request):
+    require_login(request)
+    return render(request, "user.html", {"message": request.query_params.get("message"), "error": request.query_params.get("error")})
+
+
+@app.post("/user")
+def update_user(request: Request, username: str = Form(...), display_name: str = Form(""), current_password: str = Form(""), new_password: str = Form(""), confirm_password: str = Form("")):
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    with db() as c:
+        full = c.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        if new_password:
+            if not verify_password(current_password, full["password_hash"]):
+                return RedirectResponse("/user?error=password", status_code=303)
+            if new_password != confirm_password:
+                return RedirectResponse("/user?error=confirm", status_code=303)
+            c.execute("UPDATE users SET username=?, display_name=?, password_hash=? WHERE id=?", (username, display_name, hash_password(new_password), user["id"]))
+        else:
+            c.execute("UPDATE users SET username=?, display_name=? WHERE id=?", (username, display_name, user["id"]))
+    resp = RedirectResponse("/user?message=saved", status_code=303)
+    resp.delete_cookie("appuccino_session")
+    return resp
