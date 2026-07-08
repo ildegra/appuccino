@@ -2,6 +2,7 @@ import os
 import sqlite3
 import hashlib
 import secrets
+import re
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -13,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer, BadSignature
 
 APP_NAME = "Appuccino"
-APP_VERSION = "v0.5.2"
+APP_VERSION = "v0.5.3"
 DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
 USERNAME = os.getenv("APP_USERNAME", "admin")
 PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
@@ -540,9 +541,15 @@ async def add_visit(request: Request, bar_id: int):
         )
         visit_id = cur.lastrowid
         for key, value in form.items():
-            if not key.startswith("item_") or not value:
+            # Accetta solo i campi prodotto item_1, item_2, ...
+            # e ignora item_note_1, che altrimenti verrebbe scambiato per un id categoria.
+            if not re.fullmatch(r"item_\d+", key) or not value:
                 continue
             idx = key.split("_", 1)[1]
+            try:
+                category_id = int(value)
+            except (TypeError, ValueError):
+                continue
             qty_raw = form.get(f"qty_{idx}") or "1"
             note = form.get(f"item_note_{idx}") or ""
             unit_price = parse_optional_float(form.get(f"unit_price_{idx}"))
@@ -550,7 +557,7 @@ async def add_visit(request: Request, bar_id: int):
                 qty = max(1, int(qty_raw))
             except ValueError:
                 qty = 1
-            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, int(value), qty, unit_price, note))
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, category_id, qty, unit_price, note))
     return RedirectResponse(f"/visits/{visit_id}/ratings", status_code=303)
 
 
@@ -644,9 +651,15 @@ async def edit_visit_save(request: Request, visit_id: int):
         c.execute("DELETE FROM visit_items WHERE visit_id=?", (visit_id,))
         selected = set()
         for key, value in form.items():
-            if not key.startswith("item_") or not value:
+            # Accetta solo i campi prodotto item_1, item_2, ...
+            # e ignora item_note_1, che altrimenti verrebbe scambiato per un id categoria.
+            if not re.fullmatch(r"item_\d+", key) or not value:
                 continue
             idx = key.split("_", 1)[1]
+            try:
+                category_id = int(value)
+            except (TypeError, ValueError):
+                continue
             qty_raw = form.get(f"qty_{idx}") or "1"
             note = form.get(f"item_note_{idx}") or ""
             unit_price = parse_optional_float(form.get(f"unit_price_{idx}"))
@@ -654,8 +667,8 @@ async def edit_visit_save(request: Request, visit_id: int):
                 qty = max(1, int(qty_raw))
             except ValueError:
                 qty = 1
-            selected.add(int(value))
-            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, int(value), qty, unit_price, note))
+            selected.add(category_id)
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, category_id, qty, unit_price, note))
         # Se cambiano gli alimenti, eliminiamo i voti delle categorie non più selezionate.
         if selected:
             placeholders = ",".join("?" for _ in selected)

@@ -1,8 +1,8 @@
-# Appuccino v0.5.2
+# Appuccino v0.5.3
 
 Versione Docker/FastAPI/SQLite di Appuccino.
 
-## v0.5.2
+## v0.5.3
 
 - Fix più robusto del passaggio alla pagina voti dopo il salvataggio visita.
 - Pagina voti costruita direttamente dagli elementi ordinati, evitando categorie non valutabili o dati migrati.
@@ -27,4 +27,9 @@ Versione Docker/FastAPI/SQLite di Appuccino.
 ## Deploy
 
 Aggiorna il repository Git con questi file, poi in Portainer usa **Pull and redeploy**.
-Verifica che nella barra alta compaia `v0.5.2`.
+Verifica che nella barra alta compaia `v0.5.3`.
+
+
+## v0.5.3
+- Corretto salvataggio visita quando le note degli elementi contengono testo libero.
+- Validazione più robusta dei campi prodotto nel form nuova/modifica visita.
