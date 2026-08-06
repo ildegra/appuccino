@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer, BadSignature
 
 APP_NAME = "Appuccino"
-APP_VERSION = "v0.5.3"
+APP_VERSION = "v0.5.4"
 DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
 USERNAME = os.getenv("APP_USERNAME", "admin")
 PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
@@ -293,14 +293,29 @@ def visit_items(visit_id: int):
 
 
 def grouped_rating_categories(active_only=True):
+    """Categorie selezionabili come prodotti nella visita.
+
+    Le categorie sotto la macro "Esperienza" sono valutazioni generali del locale
+    e non devono comparire tra gli elementi ordinati.
+    """
     groups = []
     by_group = {}
     for cat in rating_categories(active_only):
         group = cat.get("group_name") or "Altro"
+        if group.split(" / ", 1)[0].strip().lower() == "esperienza":
+            continue
         by_group.setdefault(group, []).append(cat)
     for name, cats in by_group.items():
         groups.append({"name": name, "items": cats})
     return groups
+
+
+def experience_categories(active_only=True):
+    """Categorie generali del locale, sempre proposte nella pagina dei voti."""
+    return [
+        cat for cat in rating_categories(active_only)
+        if (cat.get("group_name") or "").split(" / ", 1)[0].strip().lower() == "esperienza"
+    ]
 
 
 def all_categories_flat():
@@ -455,10 +470,27 @@ def index(request: Request):
         bars = [dict(r) for r in c.execute("SELECT * FROM bars ORDER BY name").fetchall()]
         visits_count = c.execute("SELECT COUNT(*) AS n FROM visits").fetchone()["n"]
         total_spent = c.execute("SELECT SUM(total_price) AS s FROM visits").fetchone()["s"] or 0
+        recent_visits = [dict(r) for r in c.execute(
+            """SELECT v.*, b.name AS bar_name FROM visits v
+               JOIN bars b ON b.id=v.bar_id ORDER BY v.visited_at DESC, v.id DESC LIMIT 6"""
+        ).fetchall()]
     for b in bars:
         b["score"] = bar_summary(b["id"])
     bars.sort(key=lambda x: (-(x["score"] or 0), x["name"].lower()))
-    return render(request, "index.html", {"bars": bars, "visits_count": visits_count, "total_spent": total_spent})
+    return render(request, "index.html", {"bars": bars[:5], "visits_count": visits_count, "total_spent": total_spent, "recent_visits": recent_visits})
+
+
+@app.get("/bars", response_class=HTMLResponse)
+def bars_page(request: Request):
+    require_login(request)
+    with db() as c:
+        bars = [dict(r) for r in c.execute("SELECT * FROM bars ORDER BY name").fetchall()]
+    for b in bars:
+        b["score"] = bar_summary(b["id"])
+        with db() as c:
+            b["visits_count"] = c.execute("SELECT COUNT(*) AS n FROM visits WHERE bar_id=?", (b["id"],)).fetchone()["n"]
+    bars.sort(key=lambda x: (-(x["score"] or 0), x["name"].lower()))
+    return render(request, "bars.html", {"bars": bars})
 
 
 @app.post("/bars")
@@ -466,7 +498,7 @@ def add_bar(request: Request, name: str = Form(...), address: str = Form(""), ci
     require_login(request)
     with db() as c:
         c.execute("INSERT INTO bars(name,address,city,notes,created_at) VALUES(?,?,?,?,?)", (name, address, city, notes, datetime.now().isoformat()))
-    return RedirectResponse("/", status_code=303)
+    return RedirectResponse("/bars", status_code=303)
 
 
 
@@ -587,14 +619,22 @@ def ratings_form(request: Request, visit_id: int):
         ).fetchall()]
 
         cats = []
+        seen_ids = set()
         for cat in cat_rows:
             cat["criteria"] = [dict(r) for r in c.execute(
                 "SELECT * FROM criteria WHERE category_id=? AND active=1 ORDER BY sort_order, id",
                 (cat["id"],),
             ).fetchall()]
-            # Le macrocategorie/contenitori non hanno criteri: le ignoriamo nei voti.
             if cat["criteria"]:
                 cats.append(cat)
+                seen_ids.add(cat["id"])
+
+        # Servizio, ambiente, pulizia e prezzo sono aspetti generali della visita:
+        # vengono sempre proposti, indipendentemente dai prodotti ordinati.
+        for cat in experience_categories(True):
+            if cat["id"] not in seen_ids:
+                cats.append(cat)
+                seen_ids.add(cat["id"])
 
         existing = {
             f"{r['category_id']}_{r['criterion_id']}": r["score"]
@@ -669,10 +709,13 @@ async def edit_visit_save(request: Request, visit_id: int):
                 qty = 1
             selected.add(category_id)
             c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, category_id, qty, unit_price, note))
-        # Se cambiano gli alimenti, eliminiamo i voti delle categorie non più selezionate.
-        if selected:
-            placeholders = ",".join("?" for _ in selected)
-            c.execute(f"DELETE FROM ratings WHERE visit_id=? AND category_id NOT IN ({placeholders})", (visit_id, *selected))
+        # Se cambiano gli alimenti, eliminiamo solo i voti dei prodotti non più selezionati.
+        # Le valutazioni generali (Esperienza) restano associate alla visita.
+        experience_ids = {cat["id"] for cat in experience_categories(True)}
+        keep_ids = selected | experience_ids
+        if keep_ids:
+            placeholders = ",".join("?" for _ in keep_ids)
+            c.execute(f"DELETE FROM ratings WHERE visit_id=? AND category_id NOT IN ({placeholders})", (visit_id, *keep_ids))
         else:
             c.execute("DELETE FROM ratings WHERE visit_id=?", (visit_id,))
         bar_id = visit["bar_id"]
