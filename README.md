@@ -1,8 +1,8 @@
-# Appuccino v0.5.4
+# Appuccino v0.5.5
 
 Versione Docker/FastAPI/SQLite di Appuccino.
 
-## v0.5.4
+## v0.5.5
 
 - Fix più robusto del passaggio alla pagina voti dopo il salvataggio visita.
 - Pagina voti costruita direttamente dagli elementi ordinati, evitando categorie non valutabili o dati migrati.
@@ -27,14 +27,14 @@ Versione Docker/FastAPI/SQLite di Appuccino.
 ## Deploy
 
 Aggiorna il repository Git con questi file, poi in Portainer usa **Pull and redeploy**.
-Verifica che nella barra alta compaia `v0.5.4`.
+Verifica che nella barra alta compaia `v0.5.5`.
 
 
-## v0.5.4
+## v0.5.5
 - Corretto salvataggio visita quando le note degli elementi contengono testo libero.
 - Validazione più robusta dei campi prodotto nel form nuova/modifica visita.
 
-## v0.5.4
+## v0.5.5
 - Le categorie sotto **Esperienza** (Prezzo, Servizio, Ambiente e Pulizia) sono valutazioni generali e compaiono sempre nella pagina voti.
 - Non compaiono più tra i prodotti ordinabili.
 - Le voci Dashboard e Bar hanno ora pagine distinte.

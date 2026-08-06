@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer, BadSignature
 
 APP_NAME = "Appuccino"
-APP_VERSION = "v0.5.4"
+APP_VERSION = "v0.5.5"
 DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
 USERNAME = os.getenv("APP_USERNAME", "admin")
 PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
@@ -159,6 +159,10 @@ def init_db():
         if "unit_price" not in visit_item_cols:
             c.execute("ALTER TABLE visit_items ADD COLUMN unit_price REAL")
 
+        rating_cols = [r["name"] for r in c.execute("PRAGMA table_info(ratings)").fetchall()]
+        if "is_na" not in rating_cols:
+            c.execute("ALTER TABLE ratings ADD COLUMN is_na INTEGER NOT NULL DEFAULT 0")
+
         existing_users = c.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
         if existing_users == 0:
             c.execute(
@@ -207,6 +211,46 @@ def init_db():
                             "INSERT INTO criteria(category_id, name, sort_order, active) VALUES (?, ?, ?, 1)",
                             (cid, crit, i),
                         )
+
+        # Le valutazioni generali devono essere sempre disponibili, anche nei database
+        # creati con versioni precedenti o nei quali non erano state aggiunte manualmente.
+        exp = c.execute("SELECT id FROM categories WHERE parent_id IS NULL AND lower(trim(name))='esperienza' LIMIT 1").fetchone()
+        if exp:
+            exp_id = exp["id"]
+        else:
+            exp_id = c.execute(
+                "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(NULL,'Esperienza','⭐',0,999,1)"
+            ).lastrowid
+
+        experience_defaults = [
+            ("Prezzo", "💶", 15, ["Rapporto qualità/prezzo"]),
+            ("Servizio", "😊", 15, ["Gentilezza", "Rapidità", "Precisione"]),
+            ("Ambiente", "🪑", 10, ["Comfort", "Rumore", "Atmosfera"]),
+            ("Pulizia", "🧼", 5, ["Bancone", "Tavoli", "Bagno"]),
+        ]
+        for order, (name, icon, weight, crits) in enumerate(experience_defaults, start=1):
+            row = c.execute(
+                "SELECT id FROM categories WHERE parent_id=? AND lower(trim(name))=lower(?) LIMIT 1",
+                (exp_id, name),
+            ).fetchone()
+            if row:
+                cid = row["id"]
+                c.execute("UPDATE categories SET active=1 WHERE id=?", (cid,))
+            else:
+                cid = c.execute(
+                    "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)",
+                    (exp_id, name, icon, weight, order),
+                ).lastrowid
+            for crit_order, crit in enumerate(crits, start=1):
+                exists = c.execute(
+                    "SELECT id FROM criteria WHERE category_id=? AND lower(trim(name))=lower(?) LIMIT 1",
+                    (cid, crit),
+                ).fetchone()
+                if not exists:
+                    c.execute(
+                        "INSERT INTO criteria(category_id,name,sort_order,active) VALUES(?,?,?,1)",
+                        (cid, crit, crit_order),
+                    )
 
 
 def current_user(request: Request):
@@ -337,7 +381,7 @@ def visit_score(visit_id: int):
         weights = 0.0
         category_scores = {}
         for cat in cats:
-            rows = c.execute("SELECT score FROM ratings WHERE visit_id=? AND category_id=?", (visit_id, cat["id"])).fetchall()
+            rows = c.execute("SELECT score FROM ratings WHERE visit_id=? AND category_id=? AND COALESCE(is_na,0)=0", (visit_id, cat["id"])).fetchall()
             if not rows:
                 continue
             avg = sum(r["score"] for r in rows) / len(rows)
@@ -390,7 +434,7 @@ def product_rankings(min_visits: int = 1):
             JOIN bars b ON b.id = v.bar_id
             JOIN categories c ON c.id = vi.category_id
             LEFT JOIN categories p ON p.id = c.parent_id
-            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id
+            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id AND COALESCE(r.is_na,0)=0
             WHERE c.active = 1
             GROUP BY c.id, b.id
             HAVING visits_count >= ?
@@ -412,7 +456,7 @@ def product_rankings(min_visits: int = 1):
             JOIN visits v ON v.id = vi.visit_id
             JOIN categories c ON c.id = vi.category_id
             LEFT JOIN categories p ON p.id = c.parent_id
-            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id
+            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id AND COALESCE(r.is_na,0)=0
             WHERE c.active = 1
             GROUP BY c.id
             HAVING visits_count >= ?
@@ -537,7 +581,7 @@ def bar_detail(request: Request, bar_id: int):
             SELECT c.name, c.icon, AVG(r.score) AS avg_score
             FROM ratings r JOIN categories c ON c.id=r.category_id
             JOIN visits v ON v.id=r.visit_id
-            WHERE v.bar_id=? AND c.active=1
+            WHERE v.bar_id=? AND c.active=1 AND COALESCE(r.is_na,0)=0
             GROUP BY c.id ORDER BY c.sort_order
             """, (bar_id,)
         ).fetchall()
@@ -637,8 +681,8 @@ def ratings_form(request: Request, visit_id: int):
                 seen_ids.add(cat["id"])
 
         existing = {
-            f"{r['category_id']}_{r['criterion_id']}": r["score"]
-            for r in c.execute("SELECT category_id, criterion_id, score FROM ratings WHERE visit_id=?", (visit_id,)).fetchall()
+            f"{r['category_id']}_{r['criterion_id']}": ("NA" if r["is_na"] else r["score"])
+            for r in c.execute("SELECT category_id, criterion_id, score, COALESCE(is_na,0) AS is_na FROM ratings WHERE visit_id=?", (visit_id,)).fetchall()
         }
     return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": cats, "existing": existing})
 
@@ -660,7 +704,19 @@ async def save_ratings_async(request: Request, visit_id: int):
             if not key.startswith("score_") or value in ("", None):
                 continue
             _, cat_id, crit_id = key.split("_")
-            c.execute("INSERT INTO ratings(visit_id,category_id,criterion_id,score) VALUES(?,?,?,?)", (visit_id, int(cat_id), int(crit_id), parse_optional_float(value)))
+            if value == "NA":
+                c.execute(
+                    "INSERT INTO ratings(visit_id,category_id,criterion_id,score,is_na) VALUES(?,?,?,?,1)",
+                    (visit_id, int(cat_id), int(crit_id), 0),
+                )
+            else:
+                score = parse_optional_float(value)
+                if score is None:
+                    continue
+                c.execute(
+                    "INSERT INTO ratings(visit_id,category_id,criterion_id,score,is_na) VALUES(?,?,?,?,0)",
+                    (visit_id, int(cat_id), int(crit_id), score),
+                )
         bar_id = c.execute("SELECT bar_id FROM visits WHERE id=?", (visit_id,)).fetchone()["bar_id"]
     return RedirectResponse(f"/bars/{bar_id}", status_code=303)
 

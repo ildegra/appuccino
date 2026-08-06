@@ -10,7 +10,16 @@
       <div class="rating-grid">
         {% for crit in cat["criteria"] %}
           {% set k = cat.id|string + '_' + crit.id|string %}
-          <label>{{ crit["name"] }}<input type="number" min="1" max="5" step="0.5" name="score_{{ cat.id }}_{{ crit.id }}" placeholder="1-5" value="{{ existing.get(k, '') }}"></label>
+          {% set current = existing.get(k, '') %}
+          <label>{{ crit["name"] }}
+            <select name="score_{{ cat.id }}_{{ crit.id }}">
+              <option value="" {% if current == '' %}selected{% endif %}>Non valutato</option>
+              <option value="NA" {% if current == 'NA' %}selected{% endif %}>N/A · non applicabile</option>
+              {% for value in [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] %}
+                <option value="{{ value }}" {% if current != 'NA' and current|string == value|string %}selected{% endif %}>{{ value|string|replace('.', ',') }} / 5</option>
+              {% endfor %}
+            </select>
+          </label>
         {% endfor %}
       </div>
     </section>
