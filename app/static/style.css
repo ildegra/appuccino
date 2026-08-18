@@ -24,3 +24,105 @@ a{color:inherit;text-decoration:none}button,.button{border:0;border-radius:14px;
 .version-badge{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.14);border-radius:999px;padding:6px 10px;font-weight:800;font-size:12px}
 .rankings-top{margin-bottom:22px}.rankings-layout{grid-template-columns:minmax(320px,430px) 1fr}.ranking-list{display:grid;gap:10px}.ranking-row{display:grid;grid-template-columns:34px 44px minmax(0,1fr) auto;gap:10px;align-items:center;border:1px solid var(--line);border-radius:16px;background:#fffdfa;padding:10px}.ranking-row:hover{border-color:var(--cappuccino)}.ranking-row.no-link:hover{border-color:var(--line)}.rank-number{width:28px;height:28px;border-radius:999px;background:var(--foam);display:grid;place-items:center;font-weight:850;color:var(--espresso);font-size:13px}.ranking-icon{width:40px;height:40px;border-radius:12px;background:var(--cream);border:1px solid var(--line);display:grid;place-items:center;font-size:22px}.ranking-main small{display:block;color:var(--muted);margin-top:2px}.product-ranking-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px}.ranking-card{border:1px solid var(--line);border-radius:20px;background:#fffdfa;padding:16px}.highlight-card{background:linear-gradient(135deg,#fffdfa,#f7eadb)}.ranking-card h3{margin:0 0 12px}.product-title{display:flex;align-items:center;gap:12px;margin-bottom:14px}.product-title h3{margin:0}.product-title small{color:var(--muted)}.place-icon.small{width:44px;height:44px;font-size:23px}.compact .ranking-row{grid-template-columns:32px minmax(0,1fr) auto}.compact .ranking-row .ranking-icon{display:none}.inline-filter{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.inline-filter label{font-size:13px;color:var(--muted)}.inline-filter input{max-width:110px;padding:9px 10px}.inline-filter button{padding:10px 14px}
 @media (max-width: 900px){.rankings-layout{grid-template-columns:1fr}.ranking-row{grid-template-columns:30px 38px minmax(0,1fr) auto}.product-ranking-grid{grid-template-columns:1fr}.inline-filter{width:100%}}
+/* ==========================================================
+   APPUCCINO 1.0
+   MOBILE FIRST FOUNDATION
+   ========================================================== */
+
+@media (max-width:768px){
+
+  /* ---------- Layout ---------- */
+
+  .container{
+    padding:14px;
+  }
+
+  .page-topbar{
+    min-height:64px;
+    padding:14px 16px;
+  }
+
+  .page-topbar h1{
+    font-size:2rem;
+  }
+
+  .version-badge{
+    display:none;
+  }
+
+
+  /* ---------- Sidebar ---------- */
+
+  .sidebar{
+    padding:14px;
+  }
+
+  .brand{
+    margin-bottom:18px;
+    font-size:2rem;
+  }
+
+  .brand-mark{
+    width:42px;
+    height:42px;
+  }
+
+  .brand-mark .cup{
+    font-size:24px;
+  }
+
+  .side-nav{
+    gap:8px;
+  }
+
+  .nav-item{
+    padding:10px 12px;
+    font-size:.95rem;
+  }
+
+
+  /* ---------- Cards ---------- */
+
+  .panel,
+  .card{
+    padding:18px;
+  }
+
+  .stats-grid{
+    gap:12px;
+  }
+
+  .stat-card{
+    padding:16px;
+  }
+
+  .stat-card b{
+    font-size:2rem;
+  }
+
+
+  /* ---------- Bar ---------- */
+
+  .place-card{
+    padding:12px;
+    gap:12px;
+  }
+
+  .place-icon{
+    width:46px;
+    height:46px;
+    font-size:22px;
+  }
+
+
+  /* ---------- Ranking ---------- */
+
+  .ranking-card{
+    padding:14px;
+  }
+
+  .ranking-row{
+    padding:10px;
+  }
+
+}
