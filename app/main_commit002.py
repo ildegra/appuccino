@@ -1,0 +1,957 @@
+import os
+import sqlite3
+import hashlib
+import secrets
+import re
+from datetime import datetime, date
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from itsdangerous import URLSafeSerializer, BadSignature
+
+APP_NAME = "Appuccino"
+APP_VERSION = "v0.6.0-dev.002"
+DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
+USERNAME = os.getenv("APP_USERNAME", "admin")
+PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(title=APP_NAME)
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
+
+def format_decimal(value, decimals=2, comma=True):
+    if value in (None, ""):
+        return ""
+    try:
+        out = f"{float(value):.{decimals}f}"
+        return out.replace(".", ",") if comma else out
+    except (TypeError, ValueError):
+        return ""
+
+
+templates.env.filters["decimal_it"] = format_decimal
+
+signer = URLSafeSerializer(SECRET_KEY, salt="appuccino-login")
+
+
+def db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+def parse_optional_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_optional_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+
+def hash_password(password: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
+    return f"pbkdf2_sha256${salt}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algo, salt, digest = stored.split("$", 2)
+        if algo != "pbkdf2_sha256":
+            return False
+        return secrets.compare_digest(hash_password(password, salt), stored)
+    except Exception:
+        return False
+
+
+def init_db():
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with db() as c:
+        c.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS bars (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                address TEXT DEFAULT '',
+                city TEXT DEFAULT '',
+                latitude REAL,
+                longitude REAL,
+                notes TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+                name TEXT NOT NULL,
+                icon TEXT DEFAULT '⭐',
+                weight REAL NOT NULL DEFAULT 10,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS criteria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                active INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS visits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bar_id INTEGER NOT NULL REFERENCES bars(id) ON DELETE CASCADE,
+                visited_at TEXT NOT NULL,
+                drink TEXT DEFAULT '',
+                food TEXT DEFAULT '',
+                total_price REAL,
+                wait_minutes INTEGER,
+                crowd TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                photo_path TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS visit_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                quantity INTEGER NOT NULL DEFAULT 1,
+                unit_price REAL,
+                note TEXT DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS ratings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                visit_id INTEGER NOT NULL REFERENCES visits(id) ON DELETE CASCADE,
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                criterion_id INTEGER REFERENCES criteria(id),
+                score REAL NOT NULL,
+                UNIQUE(visit_id, category_id, criterion_id)
+            );
+            """
+        )
+        cols = [r["name"] for r in c.execute("PRAGMA table_info(categories)").fetchall()]
+        if "parent_id" not in cols:
+            c.execute("ALTER TABLE categories ADD COLUMN parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+
+        visit_item_cols = [r["name"] for r in c.execute("PRAGMA table_info(visit_items)").fetchall()]
+        if "unit_price" not in visit_item_cols:
+            c.execute("ALTER TABLE visit_items ADD COLUMN unit_price REAL")
+
+        rating_cols = [r["name"] for r in c.execute("PRAGMA table_info(ratings)").fetchall()]
+        if "is_na" not in rating_cols:
+            c.execute("ALTER TABLE ratings ADD COLUMN is_na INTEGER NOT NULL DEFAULT 0")
+
+        existing_users = c.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        if existing_users == 0:
+            c.execute(
+                "INSERT INTO users(username,password_hash,display_name,created_at) VALUES(?,?,?,?)",
+                (USERNAME, hash_password(PASSWORD), USERNAME, datetime.now().isoformat()),
+            )
+
+        existing = c.execute("SELECT COUNT(*) AS n FROM categories").fetchone()["n"]
+        if existing == 0:
+            defaults = [
+                ("Bevande", "☕", 1, [
+                    ("Caffè", "☕", 25, ["Gusto", "Temperatura", "Crema", "Presentazione"]),
+                    ("Cappuccino", "🥛", 25, ["Gusto", "Schiuma", "Temperatura", "Equilibrio"]),
+                    ("Acqua", "💧", 2, ["Disponibilità", "Prezzo"]),
+                ]),
+                ("Dolci", "🥐", 2, [
+                    ("Croissant", "🥐", 25, ["Freschezza", "Impasto", "Farcitura", "Varietà"]),
+                    ("Paste", "🍰", 10, ["Freschezza", "Qualità", "Varietà"]),
+                ]),
+                ("Salati", "🥪", 3, [
+                    ("Tramezzino", "🥪", 8, ["Freschezza", "Farcitura", "Prezzo"]),
+                    ("Panino", "🥖", 8, ["Pane", "Farcitura", "Prezzo"]),
+                    ("Pizzetta", "🍕", 8, ["Impasto", "Condimento", "Temperatura"]),
+                ]),
+                ("Esperienza", "⭐", 4, [
+                    ("Prezzo", "💶", 15, ["Rapporto qualità/prezzo"]),
+                    ("Servizio", "😊", 15, ["Gentilezza", "Rapidità", "Precisione"]),
+                    ("Ambiente", "🪑", 10, ["Comfort", "Rumore", "Atmosfera"]),
+                    ("Pulizia", "🧼", 5, ["Bancone", "Tavoli", "Bagno"]),
+                ]),
+            ]
+            for group_name, group_icon, group_order, children in defaults:
+                group_cur = c.execute(
+                    "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(NULL,?,?,?,?,1)",
+                    (group_name, group_icon, 0, group_order),
+                )
+                parent_id = group_cur.lastrowid
+                for child_order, (name, icon, weight, crits) in enumerate(children, start=1):
+                    cur = c.execute(
+                        "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)",
+                        (parent_id, name, icon, weight, child_order),
+                    )
+                    cid = cur.lastrowid
+                    for i, crit in enumerate(crits, start=1):
+                        c.execute(
+                            "INSERT INTO criteria(category_id, name, sort_order, active) VALUES (?, ?, ?, 1)",
+                            (cid, crit, i),
+                        )
+
+        # Le valutazioni generali devono essere sempre disponibili, anche nei database
+        # creati con versioni precedenti o nei quali non erano state aggiunte manualmente.
+        exp = c.execute("SELECT id FROM categories WHERE parent_id IS NULL AND lower(trim(name))='esperienza' LIMIT 1").fetchone()
+        if exp:
+            exp_id = exp["id"]
+        else:
+            exp_id = c.execute(
+                "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(NULL,'Esperienza','⭐',0,999,1)"
+            ).lastrowid
+
+        experience_defaults = [
+            ("Prezzo", "💶", 15, ["Rapporto qualità/prezzo"]),
+            ("Servizio", "😊", 15, ["Gentilezza", "Rapidità", "Precisione"]),
+            ("Ambiente", "🪑", 10, ["Comfort", "Rumore", "Atmosfera"]),
+            ("Pulizia", "🧼", 5, ["Bancone", "Tavoli", "Bagno"]),
+        ]
+        for order, (name, icon, weight, crits) in enumerate(experience_defaults, start=1):
+            row = c.execute(
+                "SELECT id FROM categories WHERE parent_id=? AND lower(trim(name))=lower(?) LIMIT 1",
+                (exp_id, name),
+            ).fetchone()
+            if row:
+                cid = row["id"]
+                c.execute("UPDATE categories SET active=1 WHERE id=?", (cid,))
+            else:
+                cid = c.execute(
+                    "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)",
+                    (exp_id, name, icon, weight, order),
+                ).lastrowid
+            for crit_order, crit in enumerate(crits, start=1):
+                exists = c.execute(
+                    "SELECT id FROM criteria WHERE category_id=? AND lower(trim(name))=lower(?) LIMIT 1",
+                    (cid, crit),
+                ).fetchone()
+                if not exists:
+                    c.execute(
+                        "INSERT INTO criteria(category_id,name,sort_order,active) VALUES(?,?,?,1)",
+                        (cid, crit, crit_order),
+                    )
+
+
+def current_user(request: Request):
+    token = request.cookies.get("appuccino_session")
+    if not token:
+        return None
+    try:
+        data = signer.loads(token)
+    except BadSignature:
+        return None
+    user_id = data.get("uid")
+    if not user_id:
+        return None
+    with db() as c:
+        row = c.execute("SELECT id, username, display_name FROM users WHERE id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def is_logged(request: Request) -> bool:
+    return current_user(request) is not None
+
+
+def require_login(request: Request):
+    if not is_logged(request):
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+
+
+def render(request: Request, template: str, context: dict):
+    context.update({"request": request, "app_name": APP_NAME, "app_version": APP_VERSION, "current_user": current_user(request)})
+    return templates.TemplateResponse(template, context)
+
+
+def categories_with_criteria(active_only=False):
+    with db() as c:
+        where = "WHERE active=1" if active_only else ""
+        all_cats = [dict(r) for r in c.execute(f"SELECT * FROM categories {where} ORDER BY sort_order, id").fetchall()]
+        by_id = {cat["id"]: cat for cat in all_cats}
+        roots = []
+        for cat in all_cats:
+            cat["children"] = []
+            cat["criteria"] = []
+        for cat in all_cats:
+            cq = "SELECT * FROM criteria WHERE category_id=?" + (" AND active=1" if active_only else "") + " ORDER BY sort_order, id"
+            cat["criteria"] = [dict(r) for r in c.execute(cq, (cat["id"],)).fetchall()]
+            if cat.get("parent_id") and cat["parent_id"] in by_id:
+                by_id[cat["parent_id"]]["children"].append(cat)
+            else:
+                roots.append(cat)
+        return roots
+
+
+def rating_categories(active_only=True):
+    roots = categories_with_criteria(active_only)
+    out = []
+
+    def walk(cat, path=None):
+        path = path or []
+        children = cat.get("children", [])
+        # Solo le categorie finali con criteri e peso sono valutabili.
+        if cat.get("criteria") and not children:
+            item = dict(cat)
+            item["group_name"] = " / ".join(path) if path else ""
+            out.append(item)
+        for child in children:
+            walk(child, path + [cat["name"]])
+
+    for root in roots:
+        walk(root, [])
+    return out
+
+
+def visit_items(visit_id: int):
+    with db() as c:
+        return [dict(r) for r in c.execute(
+            """
+            SELECT vi.*, c.name, c.icon, c.parent_id, p.name AS group_name
+            FROM visit_items vi
+            JOIN categories c ON c.id=vi.category_id
+            LEFT JOIN categories p ON p.id=c.parent_id
+            WHERE vi.visit_id=?
+            ORDER BY COALESCE(p.sort_order, c.sort_order), c.sort_order, vi.id
+            """, (visit_id,)
+        ).fetchall()]
+
+
+def grouped_rating_categories(active_only=True):
+    """Categorie selezionabili come prodotti nella visita.
+
+    Le categorie sotto la macro "Esperienza" sono valutazioni generali del locale
+    e non devono comparire tra gli elementi ordinati.
+    """
+    groups = []
+    by_group = {}
+    for cat in rating_categories(active_only):
+        group = cat.get("group_name") or "Altro"
+        if group.split(" / ", 1)[0].strip().lower() == "esperienza":
+            continue
+        by_group.setdefault(group, []).append(cat)
+    for name, cats in by_group.items():
+        groups.append({"name": name, "items": cats})
+    return groups
+
+
+
+def quick_add_groups():
+    """Macro-categorie attive utilizzabili per l'inserimento rapido di un prodotto."""
+    with db() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, name, icon FROM categories WHERE parent_id IS NULL AND active=1 AND lower(trim(name)) != 'esperienza' ORDER BY sort_order, id"
+        ).fetchall()]
+
+
+def experience_categories(active_only=True):
+    """Categorie generali del locale, sempre proposte nella pagina dei voti."""
+    return [
+        cat for cat in rating_categories(active_only)
+        if (cat.get("group_name") or "").split(" / ", 1)[0].strip().lower() == "esperienza"
+    ]
+
+
+def all_categories_flat():
+    with db() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM categories ORDER BY COALESCE(parent_id, id), sort_order, id").fetchall()]
+
+
+def visit_score(visit_id: int):
+    with db() as c:
+        cats = c.execute(
+            """
+            SELECT * FROM categories c
+            WHERE c.active=1
+              AND NOT EXISTS (SELECT 1 FROM categories ch WHERE ch.parent_id=c.id AND ch.active=1)
+              AND EXISTS (SELECT 1 FROM criteria cr WHERE cr.category_id=c.id AND cr.active=1)
+            """
+        ).fetchall()
+        weighted = 0.0
+        weights = 0.0
+        category_scores = {}
+        for cat in cats:
+            rows = c.execute("SELECT score FROM ratings WHERE visit_id=? AND category_id=? AND COALESCE(is_na,0)=0", (visit_id, cat["id"])).fetchall()
+            if not rows:
+                continue
+            avg = sum(r["score"] for r in rows) / len(rows)
+            category_scores[cat["id"]] = avg
+            weighted += avg * cat["weight"]
+            weights += cat["weight"]
+        return round(weighted / weights, 2) if weights else None, category_scores
+
+
+def bar_summary(bar_id: int):
+    with db() as c:
+        visits = c.execute("SELECT id FROM visits WHERE bar_id=?", (bar_id,)).fetchall()
+    scores = [visit_score(v["id"])[0] for v in visits]
+    scores = [s for s in scores if s is not None]
+    return round(sum(scores) / len(scores), 2) if scores else None
+
+
+def bar_rankings():
+    with db() as c:
+        bars = [dict(r) for r in c.execute("SELECT * FROM bars ORDER BY name").fetchall()]
+    for b in bars:
+        b["score"] = bar_summary(b["id"])
+        with db() as c:
+            b["visits_count"] = c.execute("SELECT COUNT(*) AS n FROM visits WHERE bar_id=?", (b["id"],)).fetchone()["n"]
+    return sorted(bars, key=lambda x: (-(x["score"] or 0), -x["visits_count"], x["name"].lower()))
+
+
+def product_rankings(min_visits: int = 1):
+    """Classifiche dei singoli prodotti/categorie, per bar e globali.
+
+    Il voto prodotto è calcolato dalle valutazioni della categoria in ogni visita.
+    Se un prodotto è ordinato più volte nella stessa visita viene contato una volta per quella visita,
+    così non gonfia artificialmente la media.
+    """
+    with db() as c:
+        rows = [dict(r) for r in c.execute(
+            """
+            SELECT
+                c.id AS category_id,
+                c.name AS product_name,
+                c.icon AS product_icon,
+                p.name AS group_name,
+                b.id AS bar_id,
+                b.name AS bar_name,
+                COUNT(DISTINCT v.id) AS visits_count,
+                AVG(r.score) AS avg_score,
+                AVG(vi.unit_price) AS avg_price
+            FROM visit_items vi
+            JOIN visits v ON v.id = vi.visit_id
+            JOIN bars b ON b.id = v.bar_id
+            JOIN categories c ON c.id = vi.category_id
+            LEFT JOIN categories p ON p.id = c.parent_id
+            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id AND COALESCE(r.is_na,0)=0
+            WHERE c.active = 1
+            GROUP BY c.id, b.id
+            HAVING visits_count >= ?
+            ORDER BY c.name COLLATE NOCASE, avg_score DESC, visits_count DESC, b.name COLLATE NOCASE
+            """, (min_visits,)
+        ).fetchall()]
+
+        global_rows = [dict(r) for r in c.execute(
+            """
+            SELECT
+                c.id AS category_id,
+                c.name AS product_name,
+                c.icon AS product_icon,
+                p.name AS group_name,
+                COUNT(DISTINCT v.id) AS visits_count,
+                AVG(r.score) AS avg_score,
+                AVG(vi.unit_price) AS avg_price
+            FROM visit_items vi
+            JOIN visits v ON v.id = vi.visit_id
+            JOIN categories c ON c.id = vi.category_id
+            LEFT JOIN categories p ON p.id = c.parent_id
+            JOIN ratings r ON r.visit_id = vi.visit_id AND r.category_id = vi.category_id AND COALESCE(r.is_na,0)=0
+            WHERE c.active = 1
+            GROUP BY c.id
+            HAVING visits_count >= ?
+            ORDER BY avg_score DESC, visits_count DESC, c.name COLLATE NOCASE
+            """, (min_visits,)
+        ).fetchall()]
+
+    grouped = []
+    by_product = {}
+    for row in rows:
+        by_product.setdefault(row["category_id"], {"product": row, "bars": []})["bars"].append(row)
+    for data in by_product.values():
+        grouped.append(data)
+    grouped.sort(key=lambda g: (g["product"].get("group_name") or "", g["product"]["product_name"].lower()))
+    return grouped, global_rows
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "app": APP_NAME}
+
+@app.get("/login", response_class=HTMLResponse)
+def login_get(request: Request):
+    return render(request, "login.html", {"error": None})
+
+
+@app.post("/login")
+def login_post(username: str = Form(...), password: str = Form(...)):
+    with db() as c:
+        user = c.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    if user and verify_password(password, user["password_hash"]):
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie("appuccino_session", signer.dumps({"uid": user["id"]}), httponly=True, samesite="lax")
+        return resp
+    return RedirectResponse("/login?error=1", status_code=303)
+
+
+@app.get("/logout")
+def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie("appuccino_session")
+    return resp
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request):
+    require_login(request)
+    with db() as c:
+        bars = [dict(r) for r in c.execute("SELECT * FROM bars ORDER BY name").fetchall()]
+        visits_count = c.execute("SELECT COUNT(*) AS n FROM visits").fetchone()["n"]
+        total_spent = c.execute("SELECT SUM(total_price) AS s FROM visits").fetchone()["s"] or 0
+        recent_visits = [dict(r) for r in c.execute(
+            """SELECT v.*, b.name AS bar_name FROM visits v
+               JOIN bars b ON b.id=v.bar_id ORDER BY v.visited_at DESC, v.id DESC LIMIT 6"""
+        ).fetchall()]
+    for b in bars:
+        b["score"] = bar_summary(b["id"])
+    bars.sort(key=lambda x: (-(x["score"] or 0), x["name"].lower()))
+    return render(request, "index.html", {"bars": bars[:5], "visits_count": visits_count, "total_spent": total_spent, "recent_visits": recent_visits})
+
+
+@app.get("/bars", response_class=HTMLResponse)
+def bars_page(request: Request):
+    require_login(request)
+    with db() as c:
+        bars = [dict(r) for r in c.execute("SELECT * FROM bars ORDER BY name").fetchall()]
+    for b in bars:
+        b["score"] = bar_summary(b["id"])
+        with db() as c:
+            b["visits_count"] = c.execute("SELECT COUNT(*) AS n FROM visits WHERE bar_id=?", (b["id"],)).fetchone()["n"]
+    bars.sort(key=lambda x: (-(x["score"] or 0), x["name"].lower()))
+    return render(request, "bars.html", {"bars": bars})
+
+
+@app.post("/bars")
+def add_bar(request: Request, name: str = Form(...), address: str = Form(""), city: str = Form(""), notes: str = Form("")):
+    require_login(request)
+    with db() as c:
+        c.execute("INSERT INTO bars(name,address,city,notes,created_at) VALUES(?,?,?,?,?)", (name, address, city, notes, datetime.now().isoformat()))
+    return RedirectResponse("/bars", status_code=303)
+
+
+
+
+@app.get("/bars/{bar_id}/edit", response_class=HTMLResponse)
+def edit_bar_form(request: Request, bar_id: int):
+    require_login(request)
+    with db() as c:
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+    return render(request, "bar_form.html", {"bar": dict(bar)})
+
+
+@app.post("/bars/{bar_id}/edit")
+def edit_bar_save(request: Request, bar_id: int, name: str = Form(...), address: str = Form(""), city: str = Form(""), notes: str = Form("")):
+    require_login(request)
+    with db() as c:
+        bar = c.execute("SELECT id FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+        c.execute("UPDATE bars SET name=?, address=?, city=?, notes=? WHERE id=?", (name, address, city, notes, bar_id))
+    return RedirectResponse(f"/bars/{bar_id}", status_code=303)
+
+
+@app.get("/bars/{bar_id}", response_class=HTMLResponse)
+def bar_detail(request: Request, bar_id: int):
+    require_login(request)
+    with db() as c:
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+        visits = [dict(r) for r in c.execute("SELECT * FROM visits WHERE bar_id=? ORDER BY visited_at DESC, id DESC", (bar_id,)).fetchall()]
+        category_avg = c.execute(
+            """
+            SELECT c.name, c.icon, AVG(r.score) AS avg_score
+            FROM ratings r JOIN categories c ON c.id=r.category_id
+            JOIN visits v ON v.id=r.visit_id
+            WHERE v.bar_id=? AND c.active=1 AND COALESCE(r.is_na,0)=0
+            GROUP BY c.id ORDER BY c.sort_order
+            """, (bar_id,)
+        ).fetchall()
+    for v in visits:
+        v["score"], _ = visit_score(v["id"])
+        v["items"] = visit_items(v["id"])
+    return render(request, "bar_detail.html", {"bar": dict(bar), "visits": visits, "score": bar_summary(bar_id), "category_avg": category_avg})
+
+
+@app.get("/bars/{bar_id}/visit", response_class=HTMLResponse)
+def visit_form(request: Request, bar_id: int):
+    require_login(request)
+    with db() as c:
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "ordered_items": [], "quick_add_groups": quick_add_groups()})
+
+
+@app.post("/api/categories/quick-add")
+async def quick_add_category(request: Request):
+    require_login(request)
+    form = await request.form()
+
+    name = (form.get("name") or "").strip()
+    icon = (form.get("icon") or "⭐").strip() or "⭐"
+    parent_raw = form.get("parent_id")
+    criteria = [c.strip() for c in form.getlist("criteria") if c.strip()]
+
+    if not name:
+        return JSONResponse({"ok": False, "error": "Inserisci il nome del prodotto."}, status_code=400)
+    if not criteria:
+        return JSONResponse({"ok": False, "error": "Inserisci almeno un criterio di valutazione."}, status_code=400)
+
+    try:
+        parent_id = int(parent_raw)
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "Seleziona una categoria."}, status_code=400)
+
+    with db() as c:
+        parent = c.execute(
+            "SELECT id, name FROM categories WHERE id=? AND parent_id IS NULL AND active=1",
+            (parent_id,),
+        ).fetchone()
+        if not parent or parent["name"].strip().lower() == "esperienza":
+            return JSONResponse({"ok": False, "error": "Categoria non valida."}, status_code=400)
+
+        duplicate = c.execute(
+            "SELECT id FROM categories WHERE parent_id=? AND lower(trim(name))=lower(?) LIMIT 1",
+            (parent_id, name),
+        ).fetchone()
+        if duplicate:
+            return JSONResponse({"ok": False, "error": "Questo prodotto esiste già nella categoria selezionata."}, status_code=409)
+
+        next_order = c.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM categories WHERE parent_id=?",
+            (parent_id,),
+        ).fetchone()["n"]
+        cur = c.execute(
+            "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)",
+            (parent_id, name, icon, 10, next_order),
+        )
+        category_id = cur.lastrowid
+        for order, criterion in enumerate(criteria, start=1):
+            c.execute(
+                "INSERT INTO criteria(category_id,name,sort_order,active) VALUES(?,?,?,1)",
+                (category_id, criterion, order),
+            )
+
+    return JSONResponse({
+        "ok": True,
+        "category": {
+            "id": category_id,
+            "name": name,
+            "icon": icon,
+            "group_id": parent_id,
+            "group_name": parent["name"],
+        },
+    })
+
+
+@app.post("/bars/{bar_id}/visit")
+async def add_visit(request: Request, bar_id: int):
+    require_login(request)
+    form = await request.form()
+    visited_at = form.get("visited_at") or date.today().isoformat()
+    total_price = parse_optional_float(form.get("total_price"))
+    wait_minutes = parse_optional_int(form.get("wait_minutes"))
+    with db() as c:
+        if not c.execute("SELECT id FROM bars WHERE id=?", (bar_id,)).fetchone():
+            raise HTTPException(404)
+        cur = c.execute(
+            "INSERT INTO visits(bar_id,visited_at,drink,food,total_price,wait_minutes,crowd,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (bar_id, visited_at, "", "", total_price, wait_minutes, form.get("crowd", ""), form.get("notes", ""), datetime.now().isoformat())
+        )
+        visit_id = cur.lastrowid
+        for key, value in form.items():
+            # Accetta solo i campi prodotto item_1, item_2, ...
+            # e ignora item_note_1, che altrimenti verrebbe scambiato per un id categoria.
+            if not re.fullmatch(r"item_\d+", key) or not value:
+                continue
+            idx = key.split("_", 1)[1]
+            try:
+                category_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            qty_raw = form.get(f"qty_{idx}") or "1"
+            note = form.get(f"item_note_{idx}") or ""
+            unit_price = parse_optional_float(form.get(f"unit_price_{idx}"))
+            try:
+                qty = max(1, int(qty_raw))
+            except ValueError:
+                qty = 1
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, category_id, qty, unit_price, note))
+    return RedirectResponse(f"/visits/{visit_id}/ratings", status_code=303)
+
+
+@app.get("/visits/{visit_id}/ratings", response_class=HTMLResponse)
+def ratings_form(request: Request, visit_id: int):
+    require_login(request)
+    with db() as c:
+        visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
+        if not bar:
+            raise HTTPException(404)
+
+        # Costruiamo le categorie valutabili direttamente dagli elementi ordinati.
+        # È più robusto con database già migrati e con categorie create/modificate dall'utente.
+        cat_rows = [dict(r) for r in c.execute(
+            """
+            SELECT DISTINCT cat.*, parent.name AS group_name
+            FROM visit_items vi
+            JOIN categories cat ON cat.id = vi.category_id
+            LEFT JOIN categories parent ON parent.id = cat.parent_id
+            WHERE vi.visit_id = ?
+            ORDER BY COALESCE(parent.sort_order, cat.sort_order), cat.sort_order, cat.id
+            """,
+            (visit_id,),
+        ).fetchall()]
+
+        cats = []
+        seen_ids = set()
+        for cat in cat_rows:
+            cat["criteria"] = [dict(r) for r in c.execute(
+                "SELECT * FROM criteria WHERE category_id=? AND active=1 ORDER BY sort_order, id",
+                (cat["id"],),
+            ).fetchall()]
+            if cat["criteria"]:
+                cats.append(cat)
+                seen_ids.add(cat["id"])
+
+        # Servizio, ambiente, pulizia e prezzo sono aspetti generali della visita:
+        # vengono sempre proposti, indipendentemente dai prodotti ordinati.
+        for cat in experience_categories(True):
+            if cat["id"] not in seen_ids:
+                cats.append(cat)
+                seen_ids.add(cat["id"])
+
+        existing = {
+            f"{r['category_id']}_{r['criterion_id']}": ("NA" if r["is_na"] else r["score"])
+            for r in c.execute("SELECT category_id, criterion_id, score, COALESCE(is_na,0) AS is_na FROM ratings WHERE visit_id=?", (visit_id,)).fetchall()
+        }
+    return render(request, "ratings_form.html", {"visit": dict(visit), "bar": dict(bar), "cats": cats, "existing": existing})
+
+
+@app.post("/visits/{visit_id}/ratings")
+def save_ratings(request: Request, visit_id: int):
+    require_login(request)
+    # FastAPI non espone form dinamici come parametro: leggiamo async in wrapper sync non è disponibile.
+    raise HTTPException(405)
+
+
+@app.post("/visits/{visit_id}/ratings/save")
+async def save_ratings_async(request: Request, visit_id: int):
+    require_login(request)
+    form = await request.form()
+    with db() as c:
+        c.execute("DELETE FROM ratings WHERE visit_id=?", (visit_id,))
+        for key, value in form.items():
+            if not key.startswith("score_") or value in ("", None):
+                continue
+            _, cat_id, crit_id = key.split("_")
+            if value == "NA":
+                c.execute(
+                    "INSERT INTO ratings(visit_id,category_id,criterion_id,score,is_na) VALUES(?,?,?,?,1)",
+                    (visit_id, int(cat_id), int(crit_id), 0),
+                )
+            else:
+                score = parse_optional_float(value)
+                if score is None:
+                    continue
+                c.execute(
+                    "INSERT INTO ratings(visit_id,category_id,criterion_id,score,is_na) VALUES(?,?,?,?,0)",
+                    (visit_id, int(cat_id), int(crit_id), score),
+                )
+        bar_id = c.execute("SELECT bar_id FROM visits WHERE id=?", (visit_id,)).fetchone()["bar_id"]
+    return RedirectResponse(f"/bars/{bar_id}", status_code=303)
+
+
+@app.get("/visits/{visit_id}/edit", response_class=HTMLResponse)
+def edit_visit_form(request: Request, visit_id: int):
+    require_login(request)
+    with db() as c:
+        visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": dict(visit), "ordered_items": visit_items(visit_id), "quick_add_groups": quick_add_groups()})
+
+
+@app.post("/visits/{visit_id}/edit")
+async def edit_visit_save(request: Request, visit_id: int):
+    require_login(request)
+    form = await request.form()
+    visited_at = form.get("visited_at") or date.today().isoformat()
+    total_price = parse_optional_float(form.get("total_price"))
+    wait_minutes = parse_optional_int(form.get("wait_minutes"))
+    with db() as c:
+        visit = c.execute("SELECT * FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        c.execute("UPDATE visits SET visited_at=?, total_price=?, wait_minutes=?, crowd=?, notes=? WHERE id=?", (visited_at, total_price, wait_minutes, form.get("crowd", ""), form.get("notes", ""), visit_id))
+        c.execute("DELETE FROM visit_items WHERE visit_id=?", (visit_id,))
+        selected = set()
+        for key, value in form.items():
+            # Accetta solo i campi prodotto item_1, item_2, ...
+            # e ignora item_note_1, che altrimenti verrebbe scambiato per un id categoria.
+            if not re.fullmatch(r"item_\d+", key) or not value:
+                continue
+            idx = key.split("_", 1)[1]
+            try:
+                category_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            qty_raw = form.get(f"qty_{idx}") or "1"
+            note = form.get(f"item_note_{idx}") or ""
+            unit_price = parse_optional_float(form.get(f"unit_price_{idx}"))
+            try:
+                qty = max(1, int(qty_raw))
+            except ValueError:
+                qty = 1
+            selected.add(category_id)
+            c.execute("INSERT INTO visit_items(visit_id,category_id,quantity,unit_price,note) VALUES(?,?,?,?,?)", (visit_id, category_id, qty, unit_price, note))
+        # Se cambiano gli alimenti, eliminiamo solo i voti dei prodotti non più selezionati.
+        # Le valutazioni generali (Esperienza) restano associate alla visita.
+        experience_ids = {cat["id"] for cat in experience_categories(True)}
+        keep_ids = selected | experience_ids
+        if keep_ids:
+            placeholders = ",".join("?" for _ in keep_ids)
+            c.execute(f"DELETE FROM ratings WHERE visit_id=? AND category_id NOT IN ({placeholders})", (visit_id, *keep_ids))
+        else:
+            c.execute("DELETE FROM ratings WHERE visit_id=?", (visit_id,))
+        bar_id = visit["bar_id"]
+    return RedirectResponse(f"/visits/{visit_id}/ratings", status_code=303)
+
+
+@app.post("/visits/{visit_id}/delete")
+def delete_visit(request: Request, visit_id: int):
+    require_login(request)
+    with db() as c:
+        visit = c.execute("SELECT bar_id FROM visits WHERE id=?", (visit_id,)).fetchone()
+        if not visit:
+            raise HTTPException(404)
+        bar_id = visit["bar_id"]
+        c.execute("DELETE FROM visits WHERE id=?", (visit_id,))
+    return RedirectResponse(f"/bars/{bar_id}", status_code=303)
+
+
+
+@app.get("/rankings", response_class=HTMLResponse)
+def rankings(request: Request, min_visits: int = 1):
+    require_login(request)
+    min_visits = max(1, int(min_visits or 1))
+    product_groups, global_products = product_rankings(min_visits)
+    return render(request, "rankings.html", {
+        "bar_rankings": bar_rankings(),
+        "product_groups": product_groups,
+        "global_products": global_products,
+        "min_visits": min_visits,
+    })
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings(request: Request):
+    require_login(request)
+    return render(request, "settings.html", {"cats": categories_with_criteria(False), "flat_cats": all_categories_flat()})
+
+
+@app.post("/settings/categories")
+def add_category(request: Request, parent_id: Optional[int] = Form(None), name: str = Form(...), icon: str = Form("⭐"), weight: float = Form(10), sort_order: int = Form(99)):
+    require_login(request)
+    parent = parent_id if parent_id not in (0, None) else None
+    with db() as c:
+        c.execute("INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)", (parent, name, icon, weight if parent else 0, sort_order))
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/categories/{cat_id}")
+def update_category(request: Request, cat_id: int, parent_id: Optional[int] = Form(None), name: str = Form(...), icon: str = Form("⭐"), weight: float = Form(10), sort_order: int = Form(0), active: Optional[str] = Form(None)):
+    require_login(request)
+    parent = parent_id if parent_id not in (0, None, cat_id) else None
+    with db() as c:
+        c.execute("UPDATE categories SET parent_id=?, name=?, icon=?, weight=?, sort_order=?, active=? WHERE id=?", (parent, name, icon, weight, sort_order, 1 if active else 0, cat_id))
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/categories/{cat_id}/criteria")
+def add_criterion(request: Request, cat_id: int, name: str = Form(...), sort_order: int = Form(99)):
+    require_login(request)
+    with db() as c:
+        c.execute("INSERT INTO criteria(category_id,name,sort_order,active) VALUES(?,?,?,1)", (cat_id, name, sort_order))
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/criteria/{crit_id}")
+def update_criterion(request: Request, crit_id: int, name: str = Form(...), sort_order: int = Form(0), active: Optional[str] = Form(None)):
+    require_login(request)
+    with db() as c:
+        c.execute("UPDATE criteria SET name=?, sort_order=?, active=? WHERE id=?", (name, sort_order, 1 if active else 0, crit_id))
+    return RedirectResponse("/settings", status_code=303)
+
+
+@app.get("/export.csv")
+def export_csv(request: Request):
+    require_login(request)
+    import csv, tempfile
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    with db() as c, open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["bar", "data", "elementi", "prezzo_totale", "voto_globale", "note"])
+        rows = c.execute("SELECT v.*, b.name AS bar_name FROM visits v JOIN bars b ON b.id=v.bar_id ORDER BY visited_at DESC").fetchall()
+        for r in rows:
+            items = "; ".join([f"{it['quantity']}x {it['name']}" + (f" - {it['unit_price']:.2f} € cad." if it.get('unit_price') is not None else "") + (f" ({it['note']})" if it['note'] else "") for it in visit_items(r["id"])])
+            writer.writerow([r["bar_name"], r["visited_at"], items, r["total_price"], visit_score(r["id"])[0], r["notes"]])
+    return FileResponse(path, media_type="text/csv", filename="appuccino-export.csv")
+
+
+@app.get("/user", response_class=HTMLResponse)
+def user_settings(request: Request):
+    require_login(request)
+    return render(request, "user.html", {"message": request.query_params.get("message"), "error": request.query_params.get("error")})
+
+
+@app.post("/user")
+def update_user(request: Request, username: str = Form(...), display_name: str = Form(""), current_password: str = Form(""), new_password: str = Form(""), confirm_password: str = Form("")):
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    with db() as c:
+        full = c.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        if new_password:
+            if not verify_password(current_password, full["password_hash"]):
+                return RedirectResponse("/user?error=password", status_code=303)
+            if new_password != confirm_password:
+                return RedirectResponse("/user?error=confirm", status_code=303)
+            c.execute("UPDATE users SET username=?, display_name=?, password_hash=? WHERE id=?", (username, display_name, hash_password(new_password), user["id"]))
+        else:
+            c.execute("UPDATE users SET username=?, display_name=? WHERE id=?", (username, display_name, user["id"]))
+    resp = RedirectResponse("/user?message=saved", status_code=303)
+    resp.delete_cookie("appuccino_session")
+    return resp
