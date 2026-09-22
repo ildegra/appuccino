@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block page_title %}<h1>Dashboard</h1>{% endblock %}
+{% block content %}
+<section class="stats-grid">
+  <div class="stat-card"><span>Bar</span><b>{{ bars|length }}</b></div>
+  <div class="stat-card"><span>Visite</span><b>{{ visits_count }}</b></div>
+  <div class="stat-card"><span>Spesa registrata</span><b>{{ total_spent|decimal_it }} €</b></div>
+</section>
+<section class="layout-grid">
+  <div class="panel wide">
+    <div class="panel-head"><h2>Bar meglio valutati</h2><a href="/bars">Vedi tutti</a></div>
+    <div class="bar-card-list">
+      {% for bar in bars %}
+      <a class="place-card" href="/bars/{{ bar.id }}">
+        <div class="place-icon">☕</div>
+        <div class="place-main"><b>{{ bar.name }}</b><small>{{ bar.city }}{% if bar.address %} · {{ bar.address }}{% endif %}</small></div>
+        <div class="score-badge">{{ bar.score if bar.score else '—' }}</div>
+      </a>
+      {% else %}<p>Nessun bar inserito.</p>{% endfor %}
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Ultime visite</h2></div>
+    <div class="bar-card-list">
+      {% for visit in recent_visits %}
+      <a class="place-card" href="/bars/{{ visit.bar_id }}">
+        <div class="place-icon">✓</div>
+        <div class="place-main"><b>{{ visit.bar_name }}</b><small>{{ visit.visited_at }}{% if visit.total_price is not none %} · {{ visit.total_price|decimal_it }} €{% endif %}</small></div>
+      </a>
+      {% else %}<p>Nessuna visita registrata.</p>{% endfor %}
+    </div>
+  </div>
+</section>
+{% endblock %}

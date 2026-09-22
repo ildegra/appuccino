@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block page_title %}<h1>Valutazione</h1>{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="wizard-head"><div><span class="step-dot">3</span><h2>{{ bar.name }}</h2></div><p class="muted">Il voto globale userà solo le categorie compilate.</p></div>
+  <form method="post" action="/visits/{{ visit.id }}/ratings/save" class="stack">
+  {% for cat in cats %}
+    <section class="rating-card">
+      <div class="rating-card-head"><div class="icon-box">{{ cat["icon"] }}</div><div><h2>{{ cat["name"] }}</h2>{% if cat["group_name"] %}<small>{{ cat["group_name"] }}</small>{% endif %}</div><span class="weight-pill">peso {{ cat["weight"] }}%</span></div>
+      <div class="rating-grid">
+        {% for crit in cat["criteria"] %}
+          {% set k = cat.id|string + '_' + crit.id|string %}
+          {% set current = existing.get(k, '') %}
+          <label>{{ crit["name"] }}
+            <select name="score_{{ cat.id }}_{{ crit.id }}">
+              <option value="" {% if current == '' %}selected{% endif %}>Non valutato</option>
+              <option value="NA" {% if current == 'NA' %}selected{% endif %}>N/A · non applicabile</option>
+              {% for value in [1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5] %}
+                <option value="{{ value }}" {% if current != 'NA' and current|string == value|string %}selected{% endif %}>{{ value|string|replace('.', ',') }} / 5</option>
+              {% endfor %}
+            </select>
+          </label>
+        {% endfor %}
+      </div>
+    </section>
+  {% else %}
+    <section class="card"><p>Nessun elemento valutabile selezionato. Modifica la visita e aggiungi almeno un elemento ordinato.</p></section>
+  {% endfor %}
+  <div class="actions"><button>Salva visita</button><a class="button secondary" href="/visits/{{ visit.id }}/edit">Modifica elementi</a></div>
+  </form>
+</section>
+{% endblock %}
