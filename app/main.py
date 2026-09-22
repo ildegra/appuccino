@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer, BadSignature
 
 APP_NAME = "Appuccino"
-APP_VERSION = "v0.5.5"
+APP_VERSION = "v0.6.0-dev.002"
 DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
 USERNAME = os.getenv("APP_USERNAME", "admin")
 PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
@@ -354,6 +354,15 @@ def grouped_rating_categories(active_only=True):
     return groups
 
 
+
+def quick_add_groups():
+    """Macro-categorie attive utilizzabili per l'inserimento rapido di un prodotto."""
+    with db() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, name, icon FROM categories WHERE parent_id IS NULL AND active=1 AND lower(trim(name)) != 'esperienza' ORDER BY sort_order, id"
+        ).fetchall()]
+
+
 def experience_categories(active_only=True):
     """Categorie generali del locale, sempre proposte nella pagina dei voti."""
     return [
@@ -598,7 +607,69 @@ def visit_form(request: Request, bar_id: int):
         bar = c.execute("SELECT * FROM bars WHERE id=?", (bar_id,)).fetchone()
         if not bar:
             raise HTTPException(404)
-    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "ordered_items": []})
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": None, "ordered_items": [], "quick_add_groups": quick_add_groups()})
+
+
+@app.post("/api/categories/quick-add")
+async def quick_add_category(request: Request):
+    require_login(request)
+    form = await request.form()
+
+    name = (form.get("name") or "").strip()
+    icon = (form.get("icon") or "⭐").strip() or "⭐"
+    parent_raw = form.get("parent_id")
+    criteria = [c.strip() for c in form.getlist("criteria") if c.strip()]
+
+    if not name:
+        return JSONResponse({"ok": False, "error": "Inserisci il nome del prodotto."}, status_code=400)
+    if not criteria:
+        return JSONResponse({"ok": False, "error": "Inserisci almeno un criterio di valutazione."}, status_code=400)
+
+    try:
+        parent_id = int(parent_raw)
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "Seleziona una categoria."}, status_code=400)
+
+    with db() as c:
+        parent = c.execute(
+            "SELECT id, name FROM categories WHERE id=? AND parent_id IS NULL AND active=1",
+            (parent_id,),
+        ).fetchone()
+        if not parent or parent["name"].strip().lower() == "esperienza":
+            return JSONResponse({"ok": False, "error": "Categoria non valida."}, status_code=400)
+
+        duplicate = c.execute(
+            "SELECT id FROM categories WHERE parent_id=? AND lower(trim(name))=lower(?) LIMIT 1",
+            (parent_id, name),
+        ).fetchone()
+        if duplicate:
+            return JSONResponse({"ok": False, "error": "Questo prodotto esiste già nella categoria selezionata."}, status_code=409)
+
+        next_order = c.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM categories WHERE parent_id=?",
+            (parent_id,),
+        ).fetchone()["n"]
+        cur = c.execute(
+            "INSERT INTO categories(parent_id,name,icon,weight,sort_order,active) VALUES(?,?,?,?,?,1)",
+            (parent_id, name, icon, 10, next_order),
+        )
+        category_id = cur.lastrowid
+        for order, criterion in enumerate(criteria, start=1):
+            c.execute(
+                "INSERT INTO criteria(category_id,name,sort_order,active) VALUES(?,?,?,1)",
+                (category_id, criterion, order),
+            )
+
+    return JSONResponse({
+        "ok": True,
+        "category": {
+            "id": category_id,
+            "name": name,
+            "icon": icon,
+            "group_id": parent_id,
+            "group_name": parent["name"],
+        },
+    })
 
 
 @app.post("/bars/{bar_id}/visit")
@@ -729,7 +800,7 @@ def edit_visit_form(request: Request, visit_id: int):
         if not visit:
             raise HTTPException(404)
         bar = c.execute("SELECT * FROM bars WHERE id=?", (visit["bar_id"],)).fetchone()
-    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": dict(visit), "ordered_items": visit_items(visit_id)})
+    return render(request, "visit_form.html", {"bar": dict(bar), "groups": grouped_rating_categories(True), "today": date.today().isoformat(), "visit": dict(visit), "ordered_items": visit_items(visit_id), "quick_add_groups": quick_add_groups()})
 
 
 @app.post("/visits/{visit_id}/edit")
