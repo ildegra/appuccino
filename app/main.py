@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeSerializer, BadSignature
 
 APP_NAME = "Appuccino"
-APP_VERSION = "v0.6.0-dev.002"
+APP_VERSION = "v0.6.0-dev.003"
 DB_PATH = os.getenv("DB_PATH", "/data/appuccino.sqlite3")
 USERNAME = os.getenv("APP_USERNAME", "admin")
 PASSWORD = os.getenv("APP_PASSWORD", "appuccino")
@@ -530,7 +530,7 @@ def index(request: Request):
     for b in bars:
         b["score"] = bar_summary(b["id"])
     bars.sort(key=lambda x: (-(x["score"] or 0), x["name"].lower()))
-    return render(request, "index.html", {"bars": bars[:5], "visits_count": visits_count, "total_spent": total_spent, "recent_visits": recent_visits})
+    return render(request, "index.html", {"bars": bars[:5], "all_bars": sorted(bars, key=lambda x: x["name"].lower()), "visits_count": visits_count, "total_spent": total_spent, "recent_visits": recent_visits})
 
 
 @app.get("/bars", response_class=HTMLResponse)
