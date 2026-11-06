@@ -1,34 +1,107 @@
 {% extends "base.html" %}
 {% block page_title %}<h1>Dashboard</h1>{% endblock %}
 {% block content %}
-<section class="stats-grid">
-  <div class="stat-card"><span>Bar</span><b>{{ bars|length }}</b></div>
-  <div class="stat-card"><span>Visite</span><b>{{ visits_count }}</b></div>
-  <div class="stat-card"><span>Spesa registrata</span><b>{{ total_spent|decimal_it }} €</b></div>
-</section>
-<section class="layout-grid">
-  <div class="panel wide">
-    <div class="panel-head"><h2>Bar meglio valutati</h2><a href="/bars">Vedi tutti</a></div>
-    <div class="bar-card-list">
-      {% for bar in bars %}
-      <a class="place-card" href="/bars/{{ bar.id }}">
-        <div class="place-icon">☕</div>
-        <div class="place-main"><b>{{ bar.name }}</b><small>{{ bar.city }}{% if bar.address %} · {{ bar.address }}{% endif %}</small></div>
-        <div class="score-badge">{{ bar.score if bar.score else '—' }}</div>
-      </a>
-      {% else %}<p>Nessun bar inserito.</p>{% endfor %}
+<div class="desktop-home">
+  <section class="stats-grid">
+    <div class="stat-card"><span>Bar</span><b>{{ bars|length }}</b></div>
+    <div class="stat-card"><span>Visite</span><b>{{ visits_count }}</b></div>
+    <div class="stat-card"><span>Spesa registrata</span><b>{{ total_spent|decimal_it }} €</b></div>
+  </section>
+  <section class="layout-grid">
+    <div class="panel wide">
+      <div class="panel-head"><h2>Bar meglio valutati</h2><a href="/bars">Vedi tutti</a></div>
+      <div class="bar-card-list">
+        {% for bar in bars %}
+        <a class="place-card" href="/bars/{{ bar.id }}">
+          <div class="place-icon">☕</div>
+          <div class="place-main"><b>{{ bar.name }}</b><small>{{ bar.city }}{% if bar.address %} · {{ bar.address }}{% endif %}</small></div>
+          <div class="score-badge">{{ bar.score if bar.score else '—' }}</div>
+        </a>
+        {% else %}<p>Nessun bar inserito.</p>{% endfor %}
+      </div>
     </div>
-  </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Ultime visite</h2></div>
-    <div class="bar-card-list">
+    <div class="panel">
+      <div class="panel-head"><h2>Ultime visite</h2></div>
+      <div class="bar-card-list">
+        {% for visit in recent_visits %}
+        <a class="place-card" href="/bars/{{ visit.bar_id }}">
+          <div class="place-icon">✓</div>
+          <div class="place-main"><b>{{ visit.bar_name }}</b><small>{{ visit.visited_at }}{% if visit.total_price is not none %} · {{ visit.total_price|decimal_it }} €{% endif %}</small></div>
+        </a>
+        {% else %}<p>Nessuna visita registrata.</p>{% endfor %}
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="mobile-home">
+  <section class="mobile-new-visit">
+    <button type="button" class="breakfast-action" id="breakfast-action" aria-expanded="false" aria-controls="breakfast-picker">
+      <span class="breakfast-bubble" aria-hidden="true">☕</span>
+      <span class="breakfast-label">Nuova colazione</span>
+    </button>
+    <div class="breakfast-picker" id="breakfast-picker" hidden>
+      <div class="breakfast-picker-head">
+        <div><span class="eyebrow">Nuova visita</span><h2>Scegli il bar</h2></div>
+        <button type="button" class="breakfast-picker-close" id="breakfast-picker-close" aria-label="Chiudi">×</button>
+      </div>
+      <div class="breakfast-bar-list">
+        {% for bar in all_bars %}
+        <a href="/bars/{{ bar.id }}/visit" class="breakfast-bar">
+          <span class="breakfast-bar-icon">☕</span>
+          <span><b>{{ bar.name }}</b><small>{{ bar.city }}{% if bar.address %} · {{ bar.address }}{% endif %}</small></span>
+          <span class="breakfast-arrow">›</span>
+        </a>
+        {% else %}<p class="muted">Nessun bar inserito.</p>{% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="mobile-stats">
+    <div><b>{{ all_bars|length }}</b><span>Bar</span></div>
+    <div><b>{{ visits_count }}</b><span>Visite</span></div>
+    <div><b>{{ total_spent|decimal_it }} €</b><span>Spesa</span></div>
+  </section>
+
+  <section class="mobile-section">
+    <div class="mobile-section-head"><h2>Ultime visite</h2></div>
+    <div class="mobile-list">
       {% for visit in recent_visits %}
-      <a class="place-card" href="/bars/{{ visit.bar_id }}">
-        <div class="place-icon">✓</div>
-        <div class="place-main"><b>{{ visit.bar_name }}</b><small>{{ visit.visited_at }}{% if visit.total_price is not none %} · {{ visit.total_price|decimal_it }} €{% endif %}</small></div>
+      <a class="mobile-row" href="/bars/{{ visit.bar_id }}">
+        <span class="mobile-thumb">☕</span>
+        <span class="mobile-row-main"><b>{{ visit.bar_name }}</b><small>{{ visit.visited_at }}{% if visit.total_price is not none %} · {{ visit.total_price|decimal_it }} €{% endif %}</small></span>
+        <span class="mobile-chevron">›</span>
       </a>
-      {% else %}<p>Nessuna visita registrata.</p>{% endfor %}
+      {% else %}<p class="muted">Nessuna visita registrata.</p>{% endfor %}
     </div>
-  </div>
-</section>
+  </section>
+
+  <section class="mobile-section">
+    <div class="mobile-section-head"><h2>Bar meglio valutati</h2><a href="/bars">Vedi tutti</a></div>
+    <div class="mobile-list">
+      {% for bar in bars %}
+      <a class="mobile-row" href="/bars/{{ bar.id }}">
+        <span class="mobile-thumb">☕</span>
+        <span class="mobile-row-main"><b>{{ bar.name }}</b><small>{{ bar.city }}{% if bar.address %} · {{ bar.address }}{% endif %}</small></span>
+        <span class="mobile-score">{{ bar.score if bar.score else '—' }}</span>
+      </a>
+      {% else %}<p class="muted">Nessun bar inserito.</p>{% endfor %}
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const action = document.getElementById("breakfast-action");
+  const picker = document.getElementById("breakfast-picker");
+  const close = document.getElementById("breakfast-picker-close");
+  if (!action || !picker || !close) return;
+  const setOpen = (open) => {
+    picker.hidden = !open;
+    action.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  action.addEventListener("click", () => setOpen(picker.hidden));
+  close.addEventListener("click", () => setOpen(false));
+})();
+</script>
 {% endblock %}

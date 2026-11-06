@@ -151,3 +151,57 @@ a{color:inherit;text-decoration:none}button,.button{border:0;border-radius:14px;
   .quick-criteria{grid-template-columns:1fr}
   .quick-add-wrap .button{width:100%}
 }
+
+
+/* ==========================================================
+   COMMIT 003 - MOBILE HOME
+   ========================================================== */
+.mobile-home{display:none}
+
+@media (max-width:768px){
+  .desktop-home{display:none}
+  .mobile-home{display:grid;gap:16px}
+  .mobile-new-visit{display:grid;gap:12px}
+
+  .breakfast-action{width:100%;min-height:100px;padding:14px 18px;border:1px solid var(--line);border-radius:24px;background:linear-gradient(135deg,#fffdfa,#f7eadb);color:var(--espresso);box-shadow:var(--shadow);display:flex;flex-direction:column;gap:7px}
+  .breakfast-action:hover{background:linear-gradient(135deg,#fffdfa,#f7eadb)}
+  .breakfast-bubble{width:58px;height:46px;border:2px solid var(--cappuccino);border-radius:20px;display:grid;place-items:center;position:relative;background:var(--milk);font-size:27px}
+  .breakfast-bubble:after{content:"";position:absolute;left:8px;bottom:-9px;width:14px;height:14px;background:var(--milk);border-left:2px solid var(--cappuccino);border-bottom:2px solid var(--cappuccino);transform:skewY(-35deg)}
+  .breakfast-label{font-size:1rem;font-weight:850}
+
+  .breakfast-picker{border:1px solid var(--line);border-radius:22px;background:var(--milk);box-shadow:var(--shadow);padding:14px}
+  .breakfast-picker[hidden]{display:none}
+  .breakfast-picker-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:10px}
+  .breakfast-picker-head h2{margin:2px 0 0;font-size:1.25rem}
+  .breakfast-picker-close{background:transparent;color:var(--muted);box-shadow:none;padding:0;width:36px;height:36px;font-size:26px}
+  .breakfast-bar-list{display:grid;gap:7px;max-height:360px;overflow:auto}
+  .breakfast-bar{display:grid;grid-template-columns:40px minmax(0,1fr) 20px;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:15px;background:#fffdfa}
+  .breakfast-bar-icon{width:38px;height:38px;border-radius:12px;background:var(--cream);display:grid;place-items:center;border:1px solid var(--line);font-size:20px}
+  .breakfast-bar b,.breakfast-bar small{display:block}
+  .breakfast-bar small{color:var(--muted);font-size:.78rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .breakfast-arrow{font-size:25px;color:var(--coffee)}
+
+  .mobile-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--line);border-radius:20px;background:rgba(255,253,249,.9);overflow:hidden;box-shadow:0 8px 22px rgba(91,50,28,.07)}
+  .mobile-stats>div{padding:12px 6px;text-align:center;min-width:0}
+  .mobile-stats>div+div{border-left:1px solid var(--line)}
+  .mobile-stats b{display:block;color:var(--espresso);font-size:1.12rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mobile-stats span{display:block;color:var(--muted);font-size:.72rem;font-weight:700;margin-top:2px}
+
+  .mobile-section{border:1px solid var(--line);border-radius:22px;background:rgba(255,253,249,.9);box-shadow:0 8px 22px rgba(91,50,28,.07);padding:14px}
+  .mobile-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+  .mobile-section-head h2{margin:0;font-size:1.22rem}
+  .mobile-section-head a{font-size:.82rem;font-weight:750;color:var(--coffee)}
+  .mobile-list{display:grid}
+  .mobile-row{display:grid;grid-template-columns:46px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 0}
+  .mobile-row+.mobile-row{border-top:1px solid var(--line)}
+  .mobile-thumb{width:44px;height:44px;border-radius:13px;background:var(--cream);border:1px solid var(--line);display:grid;place-items:center;font-size:22px;overflow:hidden}
+  .mobile-thumb img{width:100%;height:100%;object-fit:cover}
+  .mobile-row-main{min-width:0}
+  .mobile-row-main b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mobile-row-main small{display:block;color:var(--muted);font-size:.8rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mobile-score{background:var(--espresso);color:#fff;border-radius:999px;padding:7px 10px;font-weight:850;font-size:.85rem}
+  .mobile-chevron{font-size:24px;color:var(--muted)}
+
+  body:has(.mobile-home) .page-topbar{display:none}
+  body:has(.mobile-home) .container{padding-top:14px}
+}
